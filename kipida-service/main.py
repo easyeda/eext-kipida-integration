@@ -472,11 +472,23 @@ def compute_net_results(data: KipidaInput, voltages: Dict[str, float]) -> List[N
             if load:
                 net_currents[node.net] = net_currents.get(node.net, 0.0) + load.current
 
+    # source 节点电压（每个 net 取最高电压作为参考，即 source 电压）
+    net_source_voltage: Dict[str, float] = {}
+    source_ids = {s.node_id for s in data.sources}
+    for node in data.nodes:
+        if node.id in source_ids:
+            v = voltages.get(node.id)
+            if v is not None:
+                cur = net_source_voltage.get(node.net)
+                if cur is None or v > cur:
+                    net_source_voltage[node.net] = v
+
     results = []
     for net, vs in net_voltages.items():
         min_v = min(vs)
         max_v = max(vs)
-        drop = max_v - min_v
+        source_v = net_source_voltage.get(net, max_v)
+        drop = source_v - min_v
         avg_current = net_currents.get(net, 0.0)
         results.append(NetResult(
             net=net,

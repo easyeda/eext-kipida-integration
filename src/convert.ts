@@ -166,10 +166,9 @@ export class PcbDataConverter {
       if (!addedIds.has(startNode.id)) { nodes.push(startNode); addedIds.add(startNode.id); }
       if (!addedIds.has(endNode.id)) { nodes.push(endNode); addedIds.add(endNode.id); }
 
-      // 坐标单位是 mil，转换为 mm（1 mil = 0.0254 mm）
       const MIL_TO_MM = 0.0254;
       const length = this.calculateLength(track.x1, track.y1, track.x2, track.y2) * MIL_TO_MM;
-      const area = track.width * this.DEFAULT_THICKNESS;  // width 已是 mm 单位
+      const area = (track.width * MIL_TO_MM) * this.DEFAULT_THICKNESS; // width: mil→mm
       const resistance = (this.COPPER_RESISTIVITY * length) / area;
 
       // 创建电阻
