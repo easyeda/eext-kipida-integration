@@ -1,0 +1,53 @@
+{
+	"name": "kipida-bridge",
+	"uuid": "a1i8t4u1l2a6t3i7o9n1f3i6l8e0p4u9",
+	"displayName": "KiPIDA 桥接插件",
+	"description": "桥接 EasyEDA 与 KiPIDA PDN IR Drop 分析工具",
+	"version": "1.0.0",
+	"publisher": "",
+	"engines": {
+		"eda": "^2.3.0"
+	},
+	"license": "Apache-2.0",
+	"repository": {
+		"type": "extension-store",
+		"url": ""
+	},
+	"categories": "PCB",
+	"keywords": ["PDN", "IR Drop", "Power Analysis", "KiPIDA", "Simulation"],
+	"images": {
+		"logo": "./images/logo.png"
+	},
+	"homepage": "https://pro.lceda.cn",
+	"bugs": "https://lceda.cn/page/feedback?originPage=other",
+	"activationEvents": {
+		"onEditorPcb": true
+	},
+	"entry": "./dist/index",
+	"dependentExtensions": {},
+	"headerMenus": {
+		"pcb": [
+			{
+				"id": "KiPIDA-Bridge-Pcb",
+				"title": "PDN 分析",
+				"menuItems": [
+					{
+						"id": "Run IR Drop Analysis",
+						"title": "运行 IR Drop 分析...",
+						"registerFn": "runIRDropAnalysis"
+					},
+					{
+						"id": "Configure KiPIDA Service",
+						"title": "配置服务地址...",
+						"registerFn": "configureService"
+					},
+					{
+						"id": "About",
+						"title": "关于...",
+						"registerFn": "about"
+					}
+				]
+			}
+		]
+	}
+}

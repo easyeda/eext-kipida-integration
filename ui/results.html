@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>KiPIDA 分析结果</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; background: #f0f0f0; color: #222; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+
+  .summary { padding: 8px 14px; background: #fff; border-bottom: 1px solid #ccc; font-family: monospace; font-size: 12px; max-height: 120px; overflow-y: auto; white-space: pre; }
+  .summary-title { font-weight: 600; font-size: 13px; font-family: sans-serif; margin-bottom: 4px; }
+
+  /* Net tabs (top level) */
+  .net-tabs { display: flex; flex-wrap: wrap; gap: 2px; padding: 4px 8px; background: #e0e0e0; border-bottom: 1px solid #bbb; }
+  .net-tab { padding: 4px 14px; border: 1px solid #bbb; border-radius: 3px 3px 0 0; background: #f5f5f5; cursor: pointer; font-size: 12px; }
+  .net-tab:hover { background: #e0e0e0; }
+  .net-tab.active { background: #fff; border-bottom-color: #fff; font-weight: 600; }
+
+  /* View tabs (3D / per-layer) */
+  .view-tabs { display: flex; flex-wrap: wrap; gap: 2px; padding: 4px 8px; background: #f5f5f5; border-bottom: 1px solid #ddd; }
+  .view-tab { padding: 3px 12px; border: 1px solid #ccc; border-radius: 3px; background: #fff; cursor: pointer; font-size: 11px; }
+  .view-tab:hover { background: #e8e8e8; }
+  .view-tab.active { background: #1a73e8; color: #fff; border-color: #1a73e8; }
+
+  .chart-area { flex: 1; overflow: auto; display: flex; align-items: center; justify-content: center; background: #fff; padding: 8px; }
+  .chart-area img { max-width: 100%; max-height: 100%; object-fit: contain; }
+  .no-chart { color: #999; font-size: 13px; }
+
+  .footer { padding: 6px 14px; background: #f0f0f0; border-top: 1px solid #ccc; display: flex; justify-content: flex-end; }
+  .btn-close { padding: 5px 18px; background: #fff; border: 1px solid #bbb; border-radius: 3px; cursor: pointer; font-size: 13px; }
+  .btn-close:hover { background: #e8e8e8; }
+  .loading { color: #999; font-size: 13px; padding: 20px; }
+</style>
+</head>
+<body>
+
+<div class="summary">
+  <div class="summary-title">System Simulation Results:</div>
+  <div id="summary-text" class="loading">等待分析结果...</div>
+</div>
+
+<div class="net-tabs" id="net-tabs"></div>
+<div class="view-tabs" id="view-tabs"></div>
+
+<div class="chart-area" id="chart-area">
+  <div class="loading">等待分析结果...</div>
+</div>
+
+<div class="footer">
+  <button class="btn-close" onclick="closeWindow()">Close</button>
+</div>
+
+<script>
+  let resultData = null;
+  let layerNames = {};
+  let currentNet = null;
+  let currentView = '3d';
+
+  eda.sys_MessageBus.subscribe('kipida-results-data', (msg) => {
+    resultData = msg.result;
+    layerNames = msg.layerNames || {};
+    render();
+  });
+  eda.sys_MessageBus.publish('kipida-results-ready', {});
+
+  function render() {
+    if (!resultData || !resultData.results) return;
+    const r = resultData.results;
+
+    // 文字摘要
+    let text = '========================\n';
+    for (const net of (r.net_results || [])) {
+      const minV = net.min_voltage != null ? net.min_voltage.toFixed(4) : 'N/A';
+      const maxV = net.max_voltage != null ? net.max_voltage.toFixed(4) : 'N/A';
+      const drop = net.max_drop != null ? net.max_drop.toFixed(4) : 'N/A';
+      text += `Rail: ${net.net}\n  Range: ${minV} - ${maxV} V\n  Drop:  ${drop} V\n`;
+    }
+    document.getElementById('summary-text').textContent = text;
+
+    // Net 标签页
+    const images = r.plot_images || {};
+    const nets = Object.keys(images);
+    const netTabsEl = document.getElementById('net-tabs');
+
+    if (!nets.length) {
+      netTabsEl.innerHTML = '';
+      document.getElementById('view-tabs').innerHTML = '';
+      document.getElementById('chart-area').innerHTML = '<div class="no-chart">无热力图数据</div>';
+      return;
+    }
+
+    netTabsEl.innerHTML = nets.map(n =>
+      `<div class="net-tab${n === currentNet ? ' active' : ''}" onclick="selectNet('${n}')">${n}</div>`
+    ).join('');
+
+    if (!currentNet || !images[currentNet]) {
+      currentNet = nets[0];
+      netTabsEl.querySelector('.net-tab').classList.add('active');
+    }
+
+    renderViewTabs();
+    renderChart();
+  }
+
+  function selectNet(net) {
+    currentNet = net;
+    currentView = '3d';
+    document.querySelectorAll('.net-tab').forEach(t =>
+      t.classList.toggle('active', t.textContent === net)
+    );
+    renderViewTabs();
+    renderChart();
+  }
+
+  function renderViewTabs() {
+    const images = resultData?.results?.plot_images || {};
+    const netImg = images[currentNet];
+    if (!netImg) { document.getElementById('view-tabs').innerHTML = ''; return; }
+
+    const layers = Object.keys(netImg.layers || {}).sort((a, b) => parseInt(a) - parseInt(b));
+    const tabs = [];
+
+    if (netImg.view_3d) {
+      tabs.push(`<div class="view-tab${currentView === '3d' ? ' active' : ''}" onclick="selectView('3d')">3D View</div>`);
+    }
+    for (const lid of layers) {
+      const label = getLayerLabel(lid);
+      tabs.push(`<div class="view-tab${currentView === lid ? ' active' : ''}" onclick="selectView('${lid}')">${label}</div>`);
+    }
+
+    document.getElementById('view-tabs').innerHTML = tabs.join('');
+  }
+
+  function selectView(view) {
+    currentView = view;
+    document.querySelectorAll('.view-tab').forEach(t => {
+      const isActive = (view === '3d' && t.textContent === '3D View') ||
+                       (view !== '3d' && t.textContent === getLayerLabel(view));
+      t.classList.toggle('active', isActive);
+    });
+    renderChart();
+  }
+
+  function renderChart() {
+    const images = resultData?.results?.plot_images || {};
+    const netImg = images[currentNet];
+    const area = document.getElementById('chart-area');
+
+    if (!netImg) { area.innerHTML = '<div class="no-chart">该网络无热力图数据</div>'; return; }
+
+    let b64 = null;
+    if (currentView === '3d') {
+      b64 = netImg.view_3d;
+    } else {
+      b64 = (netImg.layers || {})[currentView];
+    }
+
+    if (!b64) { area.innerHTML = '<div class="no-chart">该视图无数据</div>'; return; }
+    area.innerHTML = `<img src="data:image/png;base64,${b64}" alt="${currentNet} ${currentView}">`;
+  }
+
+  function getLayerLabel(lid) {
+    // 优先使用从 PCB 获取的实际层名
+    if (layerNames[lid]) return layerNames[lid];
+    if (layerNames[parseInt(lid)]) return layerNames[parseInt(lid)];
+    // 回退到默认名
+    const defaults = { '1': 'Top Layer', '2': 'Bottom Layer' };
+    return defaults[lid] || `Layer ${lid}`;
+  }
+
+  function closeWindow() {
+    eda.sys_IFrame.closeIFrame('kipida-results');
+  }
+</script>
+</body>
+</html>
