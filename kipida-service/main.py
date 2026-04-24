@@ -147,6 +147,10 @@ def build_mesh_and_solve(data: KipidaInput) -> Dict[str, float]:
     from mesh import Mesh
     from solver import Solver
 
+    print(f"[DEBUG] 输入: nodes={len(data.nodes)}, resistances={len(data.resistances)}, sources={len(data.sources)}, loads={len(data.loads)}")
+    print(f"[DEBUG] sources: {[(s.node_id, s.voltage) for s in data.sources]}")
+    print(f"[DEBUG] loads: {[(l.node_id, l.current) for l in data.loads]}")
+
     # 1. 找出有 Source 的 net
     source_node_ids = {s.node_id for s in data.sources}
     load_node_ids = {l.node_id for l in data.loads}
@@ -157,6 +161,16 @@ def build_mesh_and_solve(data: KipidaInput) -> Dict[str, float]:
     for node in data.nodes:
         if node.id in active_node_ids:
             active_nets.add(node.net)
+
+    print(f"[DEBUG] active_nets: {active_nets}")
+    # 检查 source/load node_id 是否能在 nodes 列表中找到
+    all_node_ids = {n.id for n in data.nodes}
+    missing_sources = source_node_ids - all_node_ids
+    missing_loads = load_node_ids - all_node_ids
+    if missing_sources:
+        print(f"[DEBUG] 警告: source node_id 在 nodes 中找不到: {missing_sources}")
+    if missing_loads:
+        print(f"[DEBUG] 警告: load node_id 在 nodes 中找不到: {missing_loads}")
 
     if not active_nets:
         raise ValueError("没有有效的电压源节点，无法求解")
@@ -220,23 +234,44 @@ def build_mesh_and_solve(data: KipidaInput) -> Dict[str, float]:
             m.add_edge_direct(prev, v, seg_g)
 
     # 5. 将所有 pad 和 via 节点连接到同 net 最近的 junction 节点
-    net_junctions: Dict[str, list] = {}
+    # pad: 只连同层最近的 junction
+    # via: 连接每一层上最近的 junction（via 跨层桥接）
+    net_layer_junctions: Dict[str, Dict[int, list]] = {}
     for node in unique_nodes:
         if node.type == 'junction':
-            net_junctions.setdefault(node.net, []).append(node)
+            layer = node.layer if node.layer is not None else -1
+            net_layer_junctions.setdefault(node.net, {}).setdefault(layer, []).append(node)
 
     G_PAD = 1e6
     for node in unique_nodes:
         if node.type not in ('pad', 'via'):
             continue
-        junctions = net_junctions.get(node.net, [])
-        if not junctions:
-            continue
-        best = min(junctions, key=lambda j: (j.x - node.x)**2 + (j.y - node.y)**2)
         u = str_to_int[node.id]
-        v = str_to_int[best.id]
-        if u != v:
-            m.add_edge_direct(u, v, G_PAD)
+        net_layers = net_layer_junctions.get(node.net, {})
+        if not net_layers:
+            continue
+
+        if node.type == 'pad':
+            # 只连同层
+            layer = node.layer if node.layer is not None else -1
+            candidates = net_layers.get(layer, [])
+            if not candidates:
+                # 回退：连全局最近
+                candidates = [j for jlist in net_layers.values() for j in jlist]
+            if candidates:
+                best = min(candidates, key=lambda j: (j.x - node.x)**2 + (j.y - node.y)**2)
+                v = str_to_int[best.id]
+                if u != v:
+                    m.add_edge_direct(u, v, G_PAD)
+        else:
+            # via: 连每一层上最近的 junction
+            for layer_junctions in net_layers.values():
+                if not layer_junctions:
+                    continue
+                best = min(layer_junctions, key=lambda j: (j.x - node.x)**2 + (j.y - node.y)**2)
+                v = str_to_int[best.id]
+                if u != v:
+                    m.add_edge_direct(u, v, G_PAD)
 
     # 6. 转换 sources / loads
     sources = []
@@ -536,7 +571,18 @@ async def analyze_pcb(data: KipidaInput):
         import math
         voltages = {k: v for k, v in voltages.items() if math.isfinite(v)}
 
+        print(f"[DEBUG] 有效电压节点数: {len(voltages)}")
+        if voltages:
+            vvals = list(voltages.values())
+            print(f"[DEBUG] 电压范围: min={min(vvals):.6f}V, max={max(vvals):.6f}V")
+        # 检查 source/load 节点是否有电压
+        for s in data.sources:
+            print(f"[DEBUG] source {s.node_id} voltage={voltages.get(s.node_id, 'NOT FOUND')}")
+        for l in data.loads[:5]:  # 只打印前5个
+            print(f"[DEBUG] load {l.node_id} voltage={voltages.get(l.node_id, 'NOT FOUND')}")
+
         net_results = compute_net_results(data, voltages)
+        print(f"[DEBUG] net_results: {[(r.net, r.max_drop, r.min_voltage, r.max_voltage) for r in net_results]}")
         # 收集所有铜箔层 ID（从电阻数据中提取）
         all_layers = sorted(set(r.layer for r in data.resistances if r.layer is not None and r.layer > 0))
         plot_images = generate_plot_images(mesh_points, data.mesh_resolution or 0.5, all_layers)

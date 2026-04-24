@@ -131,7 +131,7 @@ export class PcbDataConverter {
     deviceName?: string,
     layer?: number
   ): Kipida_Node | null {
-    const key = this.makeNodeKey(net, x, y, type);
+    const key = this.makeNodeKey(net, x, y, type, layer);
 
     if (this.nodeMap.has(key)) {
       return this.nodeMap.get(key)!;
@@ -166,9 +166,8 @@ export class PcbDataConverter {
       if (!addedIds.has(startNode.id)) { nodes.push(startNode); addedIds.add(startNode.id); }
       if (!addedIds.has(endNode.id)) { nodes.push(endNode); addedIds.add(endNode.id); }
 
-      const MIL_TO_MM = 0.0254;
-      const length = this.calculateLength(track.x1, track.y1, track.x2, track.y2) * MIL_TO_MM;
-      const area = (track.width * MIL_TO_MM) * this.DEFAULT_THICKNESS; // width: mil→mm
+      const length = this.calculateLength(track.x1, track.y1, track.x2, track.y2);
+      const area = track.width * this.DEFAULT_THICKNESS;
       const resistance = (this.COPPER_RESISTIVITY * length) / area;
 
       // 创建电阻
@@ -225,10 +224,11 @@ export class PcbDataConverter {
   /**
    * 生成节点唯一键
    */
-  private makeNodeKey(net: string, x: number, y: number, type: string): string {
+  private makeNodeKey(net: string, x: number, y: number, type: string, layer?: number): string {
     const px = x.toFixed(2);
     const py = y.toFixed(2);
-    return `${net}|${px}|${py}|${type}`;
+    const l = layer !== undefined ? layer : 'any';
+    return `${net}|${px}|${py}|${type}|${l}`;
   }
 
   /**
