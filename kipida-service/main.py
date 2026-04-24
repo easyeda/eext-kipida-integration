@@ -161,8 +161,6 @@ def build_mesh_and_solve(data: KipidaInput) -> Dict[str, float]:
     if not active_nets:
         raise ValueError("没有有效的电压源节点，无法求解")
 
-    print(f"[DEBUG] 活跃 nets: {active_nets}")
-
     # 2. 只保留活跃 net 的节点（去重）
     seen = {}
     unique_nodes = []
@@ -173,8 +171,6 @@ def build_mesh_and_solve(data: KipidaInput) -> Dict[str, float]:
             seen[node.id] = len(unique_nodes)
             unique_nodes.append(node)
     str_to_int: Dict[str, int] = seen
-
-    print(f"[DEBUG] 过滤后节点数: {len(unique_nodes)}")
 
     # 3. 构建 Mesh，node_coords 统一存 (x, y, layer)
     # 额外维护 node_net dict 记录每个节点所属 net（含插值节点）
@@ -280,7 +276,7 @@ def build_mesh_and_solve(data: KipidaInput) -> Dict[str, float]:
     for s in sources:
         source_comps.add(int(labels[s['node_id']]))
 
-    print(f"[DEBUG] 连通分量数={n_comp}, 含Source的分量={source_comps}")
+    print(f"[KiPIDA] 连通分量: {n_comp} 个, 含Source: {source_comps}")
 
     # 过滤：只保留含 Source 的分量的节点
     keep_mask = np.array([labels[i] in source_comps for i in range(N)])
@@ -313,7 +309,7 @@ def build_mesh_and_solve(data: KipidaInput) -> Dict[str, float]:
     loads2 = [{"node_id": old_to_new[l["node_id"]], "current": l["current"]}
               for l in loads if l["node_id"] in keep_set]
 
-    print(f"[DEBUG] 过滤后节点={len(keep_indices)}, sources={len(sources2)}, loads={len(loads2)}")
+    print(f"[KiPIDA] 有效节点: {len(keep_indices)}, sources={len(sources2)}, loads={len(loads2)}")
 
     solver = Solver(debug=False)
     int_voltages2 = solver.solve(m2, sources2, loads2)
@@ -328,7 +324,7 @@ def build_mesh_and_solve(data: KipidaInput) -> Dict[str, float]:
 
     import math as _math
     valid_count = sum(1 for v in result.values() if _math.isfinite(v))
-    print(f"[DEBUG] 求解完成: 有效电压={valid_count}/{len(keep_indices)}")
+    print(f"[KiPIDA] 求解完成: 有效电压={valid_count}/{len(keep_indices)}")
 
     # 收集所有节点（含插值节点）的坐标+电压，用于绘图
     # tuple: (x_mil, y_mil, layer, net, voltage, node_type)
@@ -354,7 +350,7 @@ def build_mesh_and_solve(data: KipidaInput) -> Dict[str, float]:
             mesh_points.append((x_mil, y_mil, layer, net, voltage, node_type))
             if is_pad: pad_valid += 1
 
-    print(f"[DEBUG] mesh_points={len(mesh_points)}, NaN={nan_count}, pad有效={pad_valid}, pad_NaN={pad_nan}")
+    print(f"[KiPIDA] 绘图节点: {len(mesh_points)}, pad={pad_valid}, via_NaN={pad_nan}")
     return result, mesh_points
 
 
@@ -401,11 +397,6 @@ def generate_plot_images(mesh_points: list, mesh_resolution: float = 0.5, all_la
     for net, points in net_points.items():
         if not points:
             continue
-
-        # 统计 layer 分布（调试用）
-        from collections import Counter
-        layer_dist = Counter(p[2] for p in points)
-        print(f"[DEBUG] net={net} 总点数={len(points)}, layer分布={dict(layer_dist)}")
 
         # 过滤掉 layer=0，保留 layer=-1（via 哨兵值）和正常层
         valid_points = [p for p in points if p[2] != 0]
