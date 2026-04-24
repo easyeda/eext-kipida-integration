@@ -79,7 +79,7 @@ class KipidaInput(BaseModel):
     connections: List[Connection]
     sources: List[Source] = []
     loads: List[Load] = []
-    mesh_resolution: Optional[float] = 0.5
+    mesh_resolution: Optional[float] = 0.1
     metadata: Optional[Metadata] = None
 
 
@@ -185,7 +185,7 @@ def build_mesh_and_solve(data: KipidaInput) -> Dict[str, float]:
     # 4. 添加电阻边（按 mesh_resolution 插值，单位 mil）
     import math as _math
     MIL_TO_MM = 0.0254
-    res_mm = (data.mesh_resolution or 0.5)
+    res_mm = (data.mesh_resolution or 0.1)
     res_mil = res_mm / MIL_TO_MM
     next_node_id = len(unique_nodes)
 
