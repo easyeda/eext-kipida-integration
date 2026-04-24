@@ -34,6 +34,7 @@ interface NetInfo {
 
 interface UserConfig {
   mesh_resolution: number;
+  max_drop_pct: number;
   rails: Array<{
     net: string;
     voltage: number;
@@ -182,6 +183,7 @@ export async function runIRDropAnalysis(): Promise<void> {
     kipidaData.sources = sources;
     kipidaData.loads = loads;
     kipidaData.mesh_resolution = userConfig.mesh_resolution;
+    kipidaData.max_drop_pct = userConfig.max_drop_pct;
 
     console.log('[KiPIDA] 用户配置:', userConfig);
     eda.sys_LoadingAndProgressBar.showProgressBar(30, 'pdn-analysis');

@@ -418,6 +418,7 @@
   // ── Run / Cancel ──────────────────────────────────────────
   function runAnalysis() {
     const meshResolution = parseFloat(document.getElementById('mesh-resolution').value) || 0.1;
+    const maxDropPct = parseFloat(document.getElementById('max-drop').value) || 5;
     const rails = allNets.map(net => {
       const cfg = railConfig[net.net];
       const sources = cfg.rows.filter(r => r.role === 'SOURCE').map(r => ({
@@ -431,7 +432,7 @@
 
     eda.sys_MessageBus.publish('kipida-iframe', {
       type: 'KIPIDA_RUN',
-      config: { mesh_resolution: meshResolution, rails }
+      config: { mesh_resolution: meshResolution, max_drop_pct: maxDropPct, rails }
     });
   }
 

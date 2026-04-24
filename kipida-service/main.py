@@ -80,6 +80,7 @@ class KipidaInput(BaseModel):
     sources: List[Source] = []
     loads: List[Load] = []
     mesh_resolution: Optional[float] = 0.1
+    max_drop_pct: Optional[float] = 5.0
     metadata: Optional[Metadata] = None
 
 
@@ -387,7 +388,7 @@ def build_mesh_and_solve(data: KipidaInput) -> Dict[str, float]:
     return result, mesh_points
 
 
-def generate_plot_images(mesh_points: list, mesh_resolution: float = 0.5, all_layers: list = None) -> Dict[str, 'NetPlotImages']:
+def generate_plot_images(mesh_points: list, mesh_resolution: float = 0.5, all_layers: list = None, net_results: list = None, max_drop_pct: float = 5.0) -> Dict[str, 'NetPlotImages']:
     """
     mesh_points: [(x_mil, y_mil, layer, net, voltage), ...]
     """
@@ -416,6 +417,16 @@ def generate_plot_images(mesh_points: list, mesh_resolution: float = 0.5, all_la
     MIL_TO_MM = 0.0254
     if all_layers is None:
         all_layers = []
+    if net_results is None:
+        net_results = []
+
+    # 按 net 建立固定色阶：vmax=source电压, vmin=source电压*(1-max_drop_pct/100)
+    net_scale: Dict[str, tuple] = {}
+    for r in net_results:
+        scale_max = r.max_voltage
+        scale_min = scale_max * (1.0 - max_drop_pct / 100.0)
+        net_scale[r.net] = (scale_min, scale_max)
+
     net_points: Dict[str, list] = {}
     for item in mesh_points:
         x_mil, y_mil, layer, net, voltage = item[0], item[1], item[2], item[3], item[4]
@@ -439,9 +450,14 @@ def generate_plot_images(mesh_points: list, mesh_resolution: float = 0.5, all_la
         xs = [p[0] for p in valid_points]
         ys = [p[1] for p in valid_points]
         vs = [p[3] for p in valid_points]
-        vmin, vmax = min(vs), max(vs)
-        if abs(vmax - vmin) < 1e-9:
-            vmin -= 0.001; vmax += 0.001
+
+        # 使用固定色阶（基于最大压降），与 KIPIDA 保持一致
+        if net in net_scale:
+            vmin, vmax = net_scale[net]
+        else:
+            vmin, vmax = min(vs), max(vs)
+            if abs(vmax - vmin) < 1e-9:
+                vmin -= 0.001; vmax += 0.001
 
         net_img = NetPlotImages()
 
@@ -583,7 +599,7 @@ async def analyze_pcb(data: KipidaInput):
         print(f"[DEBUG] net_results: {[(r.net, r.max_drop, r.min_voltage, r.max_voltage) for r in net_results]}")
         # 收集所有铜箔层 ID（从电阻数据中提取）
         all_layers = sorted(set(r.layer for r in data.resistances if r.layer is not None and r.layer > 0))
-        plot_images = generate_plot_images(mesh_points, data.mesh_resolution or 0.5, all_layers)
+        plot_images = generate_plot_images(mesh_points, data.mesh_resolution or 0.5, all_layers, net_results, data.max_drop_pct or 5.0)
 
         overall_max_drop = max((r.max_drop for r in net_results), default=0.0)
         total_current = sum(l.current for l in data.loads)

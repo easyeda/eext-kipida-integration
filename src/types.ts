@@ -102,6 +102,7 @@ export interface Kipida_PcbData {
   sources: Kipida_Source[];
   loads: Kipida_Load[];
   mesh_resolution?: number;
+  max_drop_pct?: number;
   metadata?: Kipida_Metadata;
 }
 
