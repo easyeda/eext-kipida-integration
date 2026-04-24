@@ -16,10 +16,13 @@ import {
 export class PcbDataConverter {
   // 铜的电阻率 (Ω·mm)
   private readonly COPPER_RESISTIVITY = 1.72e-5;
-  // 默认铜厚 (mm)
-  private readonly DEFAULT_THICKNESS = 0.035;
+  // 外层铜厚 1oz = 0.035mm，内层铜厚默认也取 0.035mm
+  private readonly OUTER_THICKNESS = 0.035;
+  private readonly INNER_THICKNESS = 0.035;
   // 坐标精度
   private readonly COORD_PRECISION = 0.01;
+
+  private outerLayerIds: Set<number> = new Set();
 
   // 节点去重映射
   private nodeMap: Map<string, Kipida_Node> = new Map();
@@ -36,6 +39,7 @@ export class PcbDataConverter {
   convert(data: EasyEDA_PcbData): Kipida_PcbData {
     this.nodeMap = new Map();
     this.nodeIdMap = new Map();
+    this.outerLayerIds = data.outerLayerIds ?? new Set();
 
     const nodes: Kipida_Node[] = [];
     const resistances: Kipida_Resistance[] = [];
@@ -166,8 +170,11 @@ export class PcbDataConverter {
       if (!addedIds.has(startNode.id)) { nodes.push(startNode); addedIds.add(startNode.id); }
       if (!addedIds.has(endNode.id)) { nodes.push(endNode); addedIds.add(endNode.id); }
 
+      const thickness = (this.outerLayerIds.size === 0 || this.outerLayerIds.has(track.layer))
+        ? this.OUTER_THICKNESS
+        : this.INNER_THICKNESS;
       const length = this.calculateLength(track.x1, track.y1, track.x2, track.y2);
-      const area = track.width * this.DEFAULT_THICKNESS;
+      const area = track.width * thickness;
       const resistance = (this.COPPER_RESISTIVITY * length) / area;
 
       // 创建电阻
@@ -179,7 +186,7 @@ export class PcbDataConverter {
         net: track.net,
         length,
         width: track.width,
-        thickness: this.DEFAULT_THICKNESS,
+        thickness: thickness,
         layer: track.layer,
         resistance,
       };

@@ -37,6 +37,7 @@ export interface EasyEDA_PcbData {
   vias: EasyEDA_Via[];
   pads: EasyEDA_Pad[];
   layerNames?: Record<number, string>;
+  outerLayerIds?: Set<number>;
 }
 
 // ============================================================

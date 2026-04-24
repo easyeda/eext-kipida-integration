@@ -196,11 +196,9 @@ def build_mesh_and_solve(data: KipidaInput) -> Dict[str, float]:
         m.node_coords[idx] = (node.x, node.y, node.layer if node.layer is not None else -1)
         node_net[idx] = node.net
 
-    # 4. 添加电阻边（按 mesh_resolution 插值，单位 mil）
+    # 4. 添加电阻边（按 mesh_resolution 插值，坐标单位 mm）
     import math as _math
-    MIL_TO_MM = 0.0254
     res_mm = (data.mesh_resolution or 0.1)
-    res_mil = res_mm / MIL_TO_MM
     next_node_id = len(unique_nodes)
 
     for res in data.resistances:
@@ -213,8 +211,8 @@ def build_mesh_and_solve(data: KipidaInput) -> Dict[str, float]:
 
         ux, uy = m.node_coords[u][0], m.node_coords[u][1]
         vx, vy = m.node_coords[v][0], m.node_coords[v][1]
-        length_mil = _math.sqrt((vx - ux)**2 + (vy - uy)**2)
-        n_seg = max(1, round(length_mil / res_mil))
+        length_mm = _math.sqrt((vx - ux)**2 + (vy - uy)**2)
+        n_seg = max(1, round(length_mm / res_mm))
 
         if n_seg <= 1:
             m.add_edge_direct(u, v, 1.0 / res.resistance)

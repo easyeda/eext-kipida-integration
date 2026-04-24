@@ -9,16 +9,27 @@ export class PcbExtractor {
     const netNames = await eda.pcb_Net.getAllNetsName();
     console.log(`[PcbExtractor] 找到 ${netNames.length} 个网络`);
 
-    // 获取铜箔层名称映射（type=SIGNAL）
+    // 获取铜箔层名称映射（type=SIGNAL），并识别外层（最小和最大层ID）
     const layerNames: Record<number, string> = {};
+    const outerLayerIds = new Set<number>();
     try {
       const allLayers = await eda.pcb_Layer.getAllLayers();
+      const signalLayerIds: number[] = [];
       for (const layer of allLayers) {
         if ((layer.type as string) === 'SIGNAL') {
-          layerNames[layer.id as number] = layer.name;
+          const id = layer.id as number;
+          layerNames[id] = layer.name;
+          signalLayerIds.push(id);
         }
       }
-      console.log(`[PcbExtractor] 铜箔层:`, layerNames);
+      if (signalLayerIds.length >= 2) {
+        signalLayerIds.sort((a, b) => a - b);
+        outerLayerIds.add(signalLayerIds[0]);
+        outerLayerIds.add(signalLayerIds[signalLayerIds.length - 1]);
+      } else {
+        signalLayerIds.forEach(id => outerLayerIds.add(id));
+      }
+      console.log(`[PcbExtractor] 铜箔层:`, layerNames, '外层:', [...outerLayerIds]);
     } catch (e) {
       console.warn('[PcbExtractor] 获取层信息失败:', e);
     }
@@ -85,7 +96,7 @@ export class PcbExtractor {
     }
 
     console.log(`[PcbExtractor] 提取完成: tracks=${tracks.length}, vias=${vias.length}, pads=${pads.length}`);
-    return { tracks, vias, pads, layerNames };
+    return { tracks, vias, pads, layerNames, outerLayerIds };
   }
 
   private extractTrack(primitive: any, netName: string): EasyEDA_Track | null {
