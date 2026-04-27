@@ -117,38 +117,35 @@ export class PcbExtractor {
     }
 
     // 覆铜实际填充区域（PrimitivePoured）
-    // 先建立 pourId → {net, layer} 映射
+    // 遍历每个覆铜边框，用其 ID 直接获取对应的填充结果
     try {
-      const pourMap = new Map<string, { net: string; layer: number }>();
       const pours = await eda.pcb_PrimitivePour.getAll();
+      const beforeCount = copperPours.length;
       for (const pour of pours) {
         const net = pour.getState_Net();
         if (!net || net.trim() === '') continue;
         const layer = pour.getState_Layer() as number;
-        const id = pour.getState_PrimitiveId();
-        pourMap.set(id, { net, layer });
-      }
+        const pourId = pour.getState_PrimitiveId();
 
-      // getAll 在类型定义中被标记为 Excluded，但运行时可用
-      const pouredList: any[] = await (eda.pcb_PrimitivePoured as any).getAll();
-      const beforeCount = copperPours.length;
-      for (const poured of pouredList) {
-        const pourId = poured.getState_PourPrimitiveId();
-        const info = pourMap.get(pourId);
-        if (!info) continue;
+        let poured: any;
+        try {
+          poured = await (eda.pcb_PrimitivePoured as any).get(pourId);
+        } catch {
+          continue;
+        }
+        if (!poured) continue;
+
         const fills: any[] = poured.getState_PourFills();
         for (const pourFill of fills) {
-          // getSourceStrictComplex 强制返回 Array<TPCB_PolygonSourceArray>
-          // 第一个元素是外轮廓，其余是镂空孔，PDN 分析只需外轮廓
           const subPolygons: any[] = pourFill.path.getSourceStrictComplex();
           if (!subPolygons || subPolygons.length === 0) continue;
           const vertices = this.parsePolygonVertices(subPolygons[0]);
           if (vertices.length >= 3) {
-            copperPours.push({ net: info.net, layer: info.layer, vertices, is_fill: false });
+            copperPours.push({ net, layer, vertices, is_fill: false });
           }
         }
       }
-      console.log(`[PcbExtractor] PrimitivePoured: ${pouredList.length} 个, 新增铺铜: ${copperPours.length - beforeCount} 个`);
+      console.log(`[PcbExtractor] PrimitivePoured: ${pours.length} 个覆铜, 新增铺铜区域: ${copperPours.length - beforeCount} 个`);
     } catch (e) {
       console.warn('[PcbExtractor] 提取 PrimitivePoured 失败:', e);
     }
