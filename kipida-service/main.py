@@ -242,26 +242,16 @@ def mesh_copper_pours(
             if junc_idx is not None:
                 m.add_edge_direct(best_nid, junc_idx, G_PAD)
 
-        # 将铺铜内的 pad 节点连接到最近的铺铜网格节点
+        # 将同网络的 pad/via 节点连接到本铺铜最近的网格节点
+        # 不做层过滤：pad 可能在不同层但电气上连接到铺铜（如通孔焊盘）
         for node in unique_nodes:
-            if node.type != 'pad' or node.net != pour.net:
-                continue
-            node_layer = node.layer if node.layer is not None else -1
-            if node_layer != pour.layer:
+            if node.net != pour.net or node.type not in ('pad', 'via'):
                 continue
             node_idx = str_to_int.get(node.id)
             if node_idx is None:
                 continue
-            best_nid = None
-            best_dist = float('inf')
-            for nid in pour_node_ids:
-                px, py, _ = m.node_coords[nid]
-                d = _math.sqrt((px - node.x) ** 2 + (py - node.y) ** 2)
-                if d < best_dist:
-                    best_dist = d
-                    best_nid = nid
-            if best_nid is not None:
-                m.add_edge_direct(node_idx, best_nid, G_PAD)
+            best_nid = min(pour_node_ids, key=lambda nid: (m.node_coords[nid][0]-node.x)**2 + (m.node_coords[nid][1]-node.y)**2)
+            m.add_edge_direct(node_idx, best_nid, G_PAD)
 
     print(f"[KiPIDA] 铺铜网格化完成: {len(data.copper_pours)} 个铺铜, {total_pour_nodes} 个网格节点")
     return next_node_id

@@ -106,9 +106,13 @@ export class PcbExtractor {
         if (!net || net.trim() === '') continue;
         const layer = fill.getState_Layer() as number;
         const polygon = fill.getState_ComplexPolygon();
-        const vertices = this.parsePolygonVertices(polygon.getSource());
-        if (vertices.length >= 3) {
-          copperPours.push({ net, layer, vertices, is_fill: true });
+        const rawVertices = this.parsePolygonVertices(polygon.getSource());
+        // 诊断：打印原始顶点坐标（前3个），用于确认单位和坐标系
+        if (copperPours.length === 0 && rawVertices.length > 0) {
+          console.log(`[PcbExtractor][DIAG] PrimitiveFill raw vertices (前3):`, JSON.stringify(rawVertices.slice(0, 3)));
+        }
+        if (rawVertices.length >= 3) {
+          copperPours.push({ net, layer, vertices: rawVertices, is_fill: true });
         }
       }
       console.log(`[PcbExtractor] PrimitiveFill: ${fills.length} 个, 有效: ${copperPours.length} 个`);
@@ -116,8 +120,7 @@ export class PcbExtractor {
       console.warn('[PcbExtractor] 提取 PrimitiveFill 失败:', e);
     }
 
-    // 覆铜实际填充区域（PrimitivePoured）
-    // 遍历每个覆铜边框，用其 ID 直接获取对应的填充结果
+    // 覆铜边框（PrimitivePour）- 与 PrimitiveFill 使用相同 API，坐标已是 canvas mil
     try {
       const pours = await eda.pcb_PrimitivePour.getAll();
       const beforeCount = copperPours.length;
@@ -125,46 +128,29 @@ export class PcbExtractor {
         const net = pour.getState_Net();
         if (!net || net.trim() === '') continue;
         const layer = pour.getState_Layer() as number;
-        const pourId = pour.getState_PrimitiveId();
-
-        let poured: any;
-        try {
-          poured = await (eda.pcb_PrimitivePoured as any).get(pourId);
-        } catch {
-          continue;
-        }
-        if (!poured) continue;
-
-        const fills: any[] = poured.getState_PourFills();
-        for (const pourFill of fills) {
-          const subPolygons: any[] = pourFill.path.getSourceStrictComplex();
-          if (!subPolygons || subPolygons.length === 0) continue;
-          const rawSrc = subPolygons[0];
-          // 诊断：打印原始多边形数据前30个元素
-          if (copperPours.length === beforeCount) {
-            console.log(`[PcbExtractor][DIAG] net=${net} layer=${layer} pourId=${pourId}`);
-            console.log(`[PcbExtractor][DIAG] rawSrc前30:`, JSON.stringify(rawSrc.slice(0, 30)));
-          }
-          const vertices = this.parsePolygonVertices(rawSrc);
-          // 铺铜顶点坐标：mm 单位，Y 轴向上为正（数学坐标系）
-          // 走线坐标：mil 单位，Y 轴向下为正（屏幕坐标系）
-          // 需要：mm→mil 换算 + Y 轴取反
-          const MM_TO_MIL = 1 / 0.0254;
-          const verticesMil = vertices.map(v => ({ x: v.x * MM_TO_MIL, y: -v.y * MM_TO_MIL }));
-          if (copperPours.length === beforeCount) {
-            console.log(`[PcbExtractor][DIAG] net=${net} layer=${layer} pourId=${pourId}`);
-            console.log(`[PcbExtractor][DIAG] 转换后顶点前5(mil):`, JSON.stringify(verticesMil.slice(0, 5)));
-          }
-          if (verticesMil.length >= 3) {
-            copperPours.push({ net, layer, vertices: verticesMil, is_fill: false });
-          }
+        const polygon = pour.getState_ComplexPolygon();
+        const rawVertices = this.parsePolygonVertices(polygon.getSource());
+        if (rawVertices.length >= 3) {
+          copperPours.push({ net, layer, vertices: rawVertices, is_fill: false });
         }
       }
-      console.log(`[PcbExtractor] PrimitivePoured: ${pours.length} 个覆铜, 新增铺铜区域: ${copperPours.length - beforeCount} 个`);
+      console.log(`[PcbExtractor] PrimitivePour: ${pours.length} 个覆铜, 新增铺铜区域: ${copperPours.length - beforeCount} 个`);
     } catch (e) {
-      console.warn('[PcbExtractor] 提取 PrimitivePoured 失败:', e);
+      console.warn('[PcbExtractor] 提取 PrimitivePour 失败:', e);
     }
 
+    // 诊断：对比焊盘坐标和铺铜坐标范围
+    if (pads.length > 0 && copperPours.length > 0) {
+      const padXs = pads.map(p => p.x), padYs = pads.map(p => p.y);
+      console.log(`[PcbExtractor][DIAG] 焊盘坐标范围(mil): x=[${Math.min(...padXs).toFixed(1)}, ${Math.max(...padXs).toFixed(1)}] y=[${Math.min(...padYs).toFixed(1)}, ${Math.max(...padYs).toFixed(1)}]`);
+      const pourVerts = copperPours[0].vertices;
+      const pvxs = pourVerts.map(v => v.x), pvys = pourVerts.map(v => v.y);
+      console.log(`[PcbExtractor][DIAG] 铺铜[0]坐标范围(mil): x=[${Math.min(...pvxs).toFixed(1)}, ${Math.max(...pvxs).toFixed(1)}] y=[${Math.min(...pvys).toFixed(1)}, ${Math.max(...pvys).toFixed(1)}]`);
+      if (tracks.length > 0) {
+        const tkXs = tracks.flatMap(t => [t.x1, t.x2]), tkYs = tracks.flatMap(t => [t.y1, t.y2]);
+        console.log(`[PcbExtractor][DIAG] 走线坐标范围(mil): x=[${Math.min(...tkXs).toFixed(1)}, ${Math.max(...tkXs).toFixed(1)}] y=[${Math.min(...tkYs).toFixed(1)}, ${Math.max(...tkYs).toFixed(1)}]`);
+      }
+    }
     console.log(`[PcbExtractor] 提取完成: tracks=${tracks.length}, vias=${vias.length}, pads=${pads.length}, copperPours=${copperPours.length}`);
     return { tracks, vias, pads, copperPours, layerNames, outerLayerIds };
   }
