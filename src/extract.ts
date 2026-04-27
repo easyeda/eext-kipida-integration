@@ -183,10 +183,28 @@ export class PcbExtractor {
           }
         }
         i += 4;
-      } else if (token === 'L' || token === 'ARC' || token === 'CARC' || token === 'C') {
-        i += 1; // 跳过命令符，后续数字对会在下一轮被收集
+      } else if (token === 'L') {
+        // L 后续数字对正常收集
+        i += 1;
+      } else if (token === 'ARC' || token === 'CARC') {
+        // 格式: startX startY ARC arcAngle endX endY
+        // startX/startY 已在前面作为数字对被收集
+        // ARC 后: arcAngle（跳过）, endX, endY（取终点）
+        const endX = arr[i + 2], endY = arr[i + 3];
+        if (typeof endX === 'number' && typeof endY === 'number') {
+          vertices.push({ x: endX, y: endY });
+        }
+        i += 4; // 跳过 ARC + arcAngle + endX + endY
+      } else if (token === 'C') {
+        // 三阶贝塞尔: x1 y1 C x2 y2 x3 y3 x4 y4 ...
+        // 每段 3 对控制点，取终点 (x4, y4)
+        const x4 = arr[i + 5], y4 = arr[i + 6];
+        if (typeof x4 === 'number' && typeof y4 === 'number') {
+          vertices.push({ x: x4, y: y4 });
+        }
+        i += 7; // 跳过 C + 3对坐标
       } else if (typeof token === 'number') {
-        // 数字对 x, y
+        // 普通数字对 x, y
         const x = token;
         const y = arr[i + 1];
         if (typeof y === 'number') {
