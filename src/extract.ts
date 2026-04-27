@@ -138,7 +138,11 @@ export class PcbExtractor {
         if (!info) continue;
         const fills: any[] = poured.getState_PourFills();
         for (const pourFill of fills) {
-          const vertices = this.parsePolygonVertices(pourFill.path.getSource());
+          // getSourceStrictComplex 强制返回 Array<TPCB_PolygonSourceArray>
+          // 第一个元素是外轮廓，其余是镂空孔，PDN 分析只需外轮廓
+          const subPolygons: any[] = pourFill.path.getSourceStrictComplex();
+          if (!subPolygons || subPolygons.length === 0) continue;
+          const vertices = this.parsePolygonVertices(subPolygons[0]);
           if (vertices.length >= 3) {
             copperPours.push({ net: info.net, layer: info.layer, vertices, is_fill: false });
           }
