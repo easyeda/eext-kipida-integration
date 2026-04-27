@@ -139,9 +139,21 @@ export class PcbExtractor {
         for (const pourFill of fills) {
           const subPolygons: any[] = pourFill.path.getSourceStrictComplex();
           if (!subPolygons || subPolygons.length === 0) continue;
-          const vertices = this.parsePolygonVertices(subPolygons[0]);
-          if (vertices.length >= 3) {
-            copperPours.push({ net, layer, vertices, is_fill: false });
+          const rawSrc = subPolygons[0];
+          // 诊断：打印原始多边形数据前30个元素
+          if (copperPours.length === beforeCount) {
+            console.log(`[PcbExtractor][DIAG] net=${net} layer=${layer} pourId=${pourId}`);
+            console.log(`[PcbExtractor][DIAG] rawSrc前30:`, JSON.stringify(rawSrc.slice(0, 30)));
+          }
+          const vertices = this.parsePolygonVertices(rawSrc);
+          // 铺铜顶点坐标单位为 mm，走线/焊盘坐标单位为 mil，统一转换为 mil
+          const MM_TO_MIL = 1 / 0.0254;
+          const verticesMil = vertices.map(v => ({ x: v.x * MM_TO_MIL, y: v.y * MM_TO_MIL }));
+          if (copperPours.length === beforeCount) {
+            console.log(`[PcbExtractor][DIAG] 解析顶点前5:`, JSON.stringify(verticesMil.slice(0, 5)));
+          }
+          if (verticesMil.length >= 3) {
+            copperPours.push({ net, layer, vertices: verticesMil, is_fill: false });
           }
         }
       }
