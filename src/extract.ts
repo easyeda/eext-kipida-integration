@@ -146,11 +146,14 @@ export class PcbExtractor {
             console.log(`[PcbExtractor][DIAG] rawSrc前30:`, JSON.stringify(rawSrc.slice(0, 30)));
           }
           const vertices = this.parsePolygonVertices(rawSrc);
-          // 铺铜顶点坐标单位为 mm，走线/焊盘坐标单位为 mil，统一转换为 mil
+          // 铺铜顶点坐标：mm 单位，Y 轴向上为正（数学坐标系）
+          // 走线坐标：mil 单位，Y 轴向下为正（屏幕坐标系）
+          // 需要：mm→mil 换算 + Y 轴取反
           const MM_TO_MIL = 1 / 0.0254;
-          const verticesMil = vertices.map(v => ({ x: v.x * MM_TO_MIL, y: v.y * MM_TO_MIL }));
+          const verticesMil = vertices.map(v => ({ x: v.x * MM_TO_MIL, y: -v.y * MM_TO_MIL }));
           if (copperPours.length === beforeCount) {
-            console.log(`[PcbExtractor][DIAG] 解析顶点前5:`, JSON.stringify(verticesMil.slice(0, 5)));
+            console.log(`[PcbExtractor][DIAG] net=${net} layer=${layer} pourId=${pourId}`);
+            console.log(`[PcbExtractor][DIAG] 转换后顶点前5(mil):`, JSON.stringify(verticesMil.slice(0, 5)));
           }
           if (verticesMil.length >= 3) {
             copperPours.push({ net, layer, vertices: verticesMil, is_fill: false });
