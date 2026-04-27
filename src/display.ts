@@ -7,6 +7,9 @@ export class ResultDisplay {
       return;
     }
 
+    // 先关闭已有面板，确保 iframe 重新加载并触发 kipida-results-ready
+    try { eda.sys_IFrame.closeIFrame('kipida-results'); } catch {}
+
     const task = eda.sys_MessageBus.subscribe('kipida-results-ready', () => {
       task.cancel();
       eda.sys_MessageBus.publish('kipida-results-data', { result, layerNames: layerNames || {} });

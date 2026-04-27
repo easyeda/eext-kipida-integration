@@ -4,6 +4,7 @@ import {
   Kipida_Node,
   Kipida_Resistance,
   Kipida_Connection,
+  Kipida_CopperPour,
   Kipida_Source,
   Kipida_Load,
 } from './types';
@@ -52,12 +53,19 @@ export class PcbDataConverter {
     this._lastNodes = nodes;
     const { sources, loads } = this.generateSourcesAndLoads(nodes);
 
+    const copperPours: Kipida_CopperPour[] = (data.copperPours || []).map(p => ({
+      net: p.net,
+      layer: p.layer,
+      vertices: p.vertices,
+    }));
+
     return {
       nodes,
       resistances,
       connections,
       sources,
       loads,
+      copper_pours: copperPours,
       metadata: {
         total_nets: this.countNets(data),
         total_tracks: data.tracks.length,

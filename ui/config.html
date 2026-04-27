@@ -177,14 +177,16 @@
 
   function guessVoltage(name) {
     const n = name.toUpperCase();
-    const m = n.match(/(\d+[.,]\d+|\d+)V/);
-    if (m) return parseFloat(m[1].replace(',', '.'));
+    // 优先匹配 XVY 格式（如 3V3→3.3, 1V8→1.8, 1V5→1.5, 1V2→1.2）
+    const mVx = n.match(/(\d+)V(\d+)/);
+    if (mVx) return parseFloat(mVx[1] + '.' + mVx[2]);
+    // 匹配带小数点的电压（如 3.3V, 1.8V）
+    const mDot = n.match(/(\d+\.\d+)V/);
+    if (mDot) return parseFloat(mDot[1]);
+    // 匹配整数电压（如 5V, 12V, 3V）
+    const mInt = n.match(/(\d+)V/);
+    if (mInt) return parseFloat(mInt[1]);
     if (n.includes('GND')) return 0;
-    if (n.includes('5V') || n === '+5V') return 5;
-    if (n.includes('3V3') || n.includes('3.3')) return 3.3;
-    if (n.includes('1V8') || n.includes('1.8')) return 1.8;
-    if (n.includes('1V2') || n.includes('1.2')) return 1.2;
-    if (n.includes('12V')) return 12;
     return 3.3;
   }
 

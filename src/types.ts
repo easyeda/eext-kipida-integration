@@ -32,10 +32,18 @@ export interface EasyEDA_Pad {
   device_name?: string;
 }
 
+export interface EasyEDA_CopperPour {
+  net: string;
+  layer: number;
+  vertices: Array<{ x: number; y: number }>;
+  is_fill: boolean;
+}
+
 export interface EasyEDA_PcbData {
   tracks: EasyEDA_Track[];
   vias: EasyEDA_Via[];
   pads: EasyEDA_Pad[];
+  copperPours?: EasyEDA_CopperPour[];
   layerNames?: Record<number, string>;
   outerLayerIds?: Set<number>;
 }
@@ -95,12 +103,19 @@ export interface Kipida_Load {
   current: number;
 }
 
+export interface Kipida_CopperPour {
+  net: string;
+  layer: number;
+  vertices: Array<{ x: number; y: number }>;
+}
+
 export interface Kipida_PcbData {
   nodes: Kipida_Node[];
   resistances: Kipida_Resistance[];
   connections: Kipida_Connection[];
   sources: Kipida_Source[];
   loads: Kipida_Load[];
+  copper_pours?: Kipida_CopperPour[];
   mesh_resolution?: number;
   max_drop_pct?: number;
   metadata?: Kipida_Metadata;

@@ -1,4 +1,4 @@
-import { EasyEDA_PcbData, EasyEDA_Track, EasyEDA_Via, EasyEDA_Pad } from './types';
+import { EasyEDA_PcbData, EasyEDA_Track, EasyEDA_Via, EasyEDA_Pad, EasyEDA_CopperPour } from './types';
 
 export class PcbExtractor {
   async extractAll(): Promise<EasyEDA_PcbData> {
@@ -95,8 +95,108 @@ export class PcbExtractor {
       }
     }
 
-    console.log(`[PcbExtractor] 提取完成: tracks=${tracks.length}, vias=${vias.length}, pads=${pads.length}`);
-    return { tracks, vias, pads, layerNames, outerLayerIds };
+    // 提取铺铜（PrimitiveFill + PrimitivePoured 实际填充区域）
+    const copperPours: EasyEDA_CopperPour[] = [];
+
+    // 静态填充
+    try {
+      const fills = await eda.pcb_PrimitiveFill.getAll();
+      for (const fill of fills) {
+        const net = fill.getState_Net();
+        if (!net || net.trim() === '') continue;
+        const layer = fill.getState_Layer() as number;
+        const polygon = fill.getState_ComplexPolygon();
+        const vertices = this.parsePolygonVertices(polygon.getSource());
+        if (vertices.length >= 3) {
+          copperPours.push({ net, layer, vertices, is_fill: true });
+        }
+      }
+      console.log(`[PcbExtractor] PrimitiveFill: ${fills.length} 个, 有效: ${copperPours.length} 个`);
+    } catch (e) {
+      console.warn('[PcbExtractor] 提取 PrimitiveFill 失败:', e);
+    }
+
+    // 覆铜实际填充区域（PrimitivePoured）
+    // 先建立 pourId → {net, layer} 映射
+    try {
+      const pourMap = new Map<string, { net: string; layer: number }>();
+      const pours = await eda.pcb_PrimitivePour.getAll();
+      for (const pour of pours) {
+        const net = pour.getState_Net();
+        if (!net || net.trim() === '') continue;
+        const layer = pour.getState_Layer() as number;
+        const id = pour.getState_PrimitiveId();
+        pourMap.set(id, { net, layer });
+      }
+
+      // getAll 在类型定义中被标记为 Excluded，但运行时可用
+      const pouredList: any[] = await (eda.pcb_PrimitivePoured as any).getAll();
+      const beforeCount = copperPours.length;
+      for (const poured of pouredList) {
+        const pourId = poured.getState_PourPrimitiveId();
+        const info = pourMap.get(pourId);
+        if (!info) continue;
+        const fills: any[] = poured.getState_PourFills();
+        for (const pourFill of fills) {
+          const vertices = this.parsePolygonVertices(pourFill.path.getSource());
+          if (vertices.length >= 3) {
+            copperPours.push({ net: info.net, layer: info.layer, vertices, is_fill: false });
+          }
+        }
+      }
+      console.log(`[PcbExtractor] PrimitivePoured: ${pouredList.length} 个, 新增铺铜: ${copperPours.length - beforeCount} 个`);
+    } catch (e) {
+      console.warn('[PcbExtractor] 提取 PrimitivePoured 失败:', e);
+    }
+
+    console.log(`[PcbExtractor] 提取完成: tracks=${tracks.length}, vias=${vias.length}, pads=${pads.length}, copperPours=${copperPours.length}`);
+    return { tracks, vias, pads, copperPours, layerNames, outerLayerIds };
+  }
+
+  private parsePolygonVertices(source: any): Array<{ x: number; y: number }> {
+    if (!source) return [];
+    const arr: Array<any> = Array.isArray(source) ? source : [];
+    const vertices: Array<{ x: number; y: number }> = [];
+    let i = 0;
+
+    while (i < arr.length) {
+      const token = arr[i];
+
+      if (token === 'R') {
+        // R x y width height rotation round → 展开为4个矩形顶点
+        const x = arr[i + 1], y = arr[i + 2], w = arr[i + 3], h = arr[i + 4];
+        if (typeof x === 'number' && typeof y === 'number' && typeof w === 'number' && typeof h === 'number') {
+          vertices.push({ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h });
+        }
+        i += 7;
+      } else if (token === 'CIRCLE') {
+        // CIRCLE cx cy r → 近似为8边形
+        const cx = arr[i + 1], cy = arr[i + 2], r = arr[i + 3];
+        if (typeof cx === 'number' && typeof cy === 'number' && typeof r === 'number') {
+          for (let k = 0; k < 8; k++) {
+            const angle = (k / 8) * 2 * Math.PI;
+            vertices.push({ x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) });
+          }
+        }
+        i += 4;
+      } else if (token === 'L' || token === 'ARC' || token === 'CARC' || token === 'C') {
+        i += 1; // 跳过命令符，后续数字对会在下一轮被收集
+      } else if (typeof token === 'number') {
+        // 数字对 x, y
+        const x = token;
+        const y = arr[i + 1];
+        if (typeof y === 'number') {
+          vertices.push({ x, y });
+          i += 2;
+        } else {
+          i += 1;
+        }
+      } else {
+        i += 1;
+      }
+    }
+
+    return vertices;
   }
 
   private extractTrack(primitive: any, netName: string): EasyEDA_Track | null {

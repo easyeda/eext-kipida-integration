@@ -25,6 +25,12 @@ from typing import List, Optional, Dict
 # 数据模型定义
 # ============================================================
 
+class CopperPour(BaseModel):
+    net: str
+    layer: int
+    vertices: List[Dict[str, float]]  # [{"x": ..., "y": ...}, ...]
+
+
 class Node(BaseModel):
     id: str
     net: str
@@ -79,6 +85,7 @@ class KipidaInput(BaseModel):
     connections: List[Connection]
     sources: List[Source] = []
     loads: List[Load] = []
+    copper_pours: List[CopperPour] = []
     mesh_resolution: Optional[float] = 0.1
     max_drop_pct: Optional[float] = 5.0
     metadata: Optional[Metadata] = None
@@ -139,6 +146,127 @@ analysis_state = {
 # KiPIDA Solver 集成
 # ============================================================
 
+def mesh_copper_pours(
+    data: 'KipidaInput',
+    m,
+    str_to_int: Dict[str, int],
+    node_net: Dict[int, str],
+    next_node_id: int,
+    active_nets: set,
+    unique_nodes: list,
+    net_layer_junctions: Dict[str, Dict[int, list]],
+) -> int:
+    """
+    将铺铜多边形网格化并融合到 Mesh 中。
+    返回更新后的 next_node_id。
+    """
+    print(f"[DEBUG] mesh_copper_pours 调用: copper_pours={len(data.copper_pours)}, active_nets={active_nets}")
+    if not data.copper_pours:
+        return next_node_id
+
+    try:
+        from shapely.geometry import Polygon, Point
+        import numpy as np
+        import math as _math
+    except ImportError:
+        print("[KiPIDA] 警告: shapely 未安装，跳过铺铜网格化")
+        return next_node_id
+
+    COPPER_RESISTIVITY = 1.72e-5  # Ω·mm
+    COPPER_THICKNESS = 0.035       # mm (1oz)
+    R_SHEET = COPPER_RESISTIVITY / COPPER_THICKNESS  # Ω/square
+    MIL_TO_MM = 0.0254
+    res_mm = data.mesh_resolution or 0.1
+    res_mil = res_mm / MIL_TO_MM   # 坐标系为 mil，网格步长转换为 mil
+    G_CELL = 1.0 / R_SHEET         # 正方形网格 L/W=1，G = 1/R_sheet
+    G_PAD = 1e6
+
+    total_pour_nodes = 0
+
+    for pour in data.copper_pours:
+        if pour.net not in active_nets:
+            continue
+        if len(pour.vertices) < 3:
+            continue
+
+        try:
+            poly = Polygon([(v['x'], v['y']) for v in pour.vertices])
+            if not poly.is_valid:
+                poly = poly.buffer(0)
+            if poly.is_empty:
+                continue
+        except Exception as e:
+            print(f"[KiPIDA] 铺铜多边形构建失败 net={pour.net}: {e}")
+            continue
+
+        minx, miny, maxx, maxy = poly.bounds
+        xs = np.arange(minx + res_mil * 0.5, maxx, res_mil)
+        ys = np.arange(miny + res_mil * 0.5, maxy, res_mil)
+
+        # 收集多边形内的网格点，用 (ix, iy) 索引快速查找相邻节点
+        grid: Dict[tuple, int] = {}  # (ix, iy) → node_id
+        for ix, x in enumerate(xs):
+            for iy, y in enumerate(ys):
+                if poly.contains(Point(x, y)):
+                    nid = next_node_id
+                    next_node_id += 1
+                    m.nodes.append(nid)
+                    m.node_coords[nid] = (float(x), float(y), pour.layer)
+                    node_net[nid] = pour.net
+                    grid[(ix, iy)] = nid
+
+        if not grid:
+            continue
+
+        # 连接相邻网格节点（横向 + 纵向）
+        # 铺铜方块电阻 R_cell = R_sheet（正方形，L/W=1），但坐标单位是 mil
+        # 实际步长 res_mil mil = res_mm mm，电阻 = R_sheet * (res_mm/res_mm) = R_sheet
+        for (ix, iy), nid in grid.items():
+            right = grid.get((ix + 1, iy))
+            if right is not None:
+                m.add_edge_direct(nid, right, G_CELL)
+            up = grid.get((ix, iy + 1))
+            if up is not None:
+                m.add_edge_direct(nid, up, G_CELL)
+
+        pour_node_ids = list(grid.values())
+        total_pour_nodes += len(pour_node_ids)
+
+        # 将铺铜网格节点连接到同层同网络的走线 junction 节点
+        # 无距离阈值：同网络的 junction 必然与铺铜电气相连，连接最近的网格节点
+        layer_juncs = net_layer_junctions.get(pour.net, {}).get(pour.layer, [])
+        for junc in layer_juncs:
+            jx, jy = junc.x, junc.y
+            best_nid = min(pour_node_ids, key=lambda nid: (m.node_coords[nid][0]-jx)**2 + (m.node_coords[nid][1]-jy)**2)
+            junc_idx = str_to_int.get(junc.id)
+            if junc_idx is not None:
+                m.add_edge_direct(best_nid, junc_idx, G_PAD)
+
+        # 将铺铜内的 pad 节点连接到最近的铺铜网格节点
+        for node in unique_nodes:
+            if node.type != 'pad' or node.net != pour.net:
+                continue
+            node_layer = node.layer if node.layer is not None else -1
+            if node_layer != pour.layer:
+                continue
+            node_idx = str_to_int.get(node.id)
+            if node_idx is None:
+                continue
+            best_nid = None
+            best_dist = float('inf')
+            for nid in pour_node_ids:
+                px, py, _ = m.node_coords[nid]
+                d = _math.sqrt((px - node.x) ** 2 + (py - node.y) ** 2)
+                if d < best_dist:
+                    best_dist = d
+                    best_nid = nid
+            if best_nid is not None:
+                m.add_edge_direct(node_idx, best_nid, G_PAD)
+
+    print(f"[KiPIDA] 铺铜网格化完成: {len(data.copper_pours)} 个铺铜, {total_pour_nodes} 个网格节点")
+    return next_node_id
+
+
 def build_mesh_and_solve(data: KipidaInput) -> Dict[str, float]:
     """
     将 EasyEDA 数据转换为 KiPIDA Mesh，调用真实 Solver 求解。
@@ -148,7 +276,7 @@ def build_mesh_and_solve(data: KipidaInput) -> Dict[str, float]:
     from mesh import Mesh
     from solver import Solver
 
-    print(f"[DEBUG] 输入: nodes={len(data.nodes)}, resistances={len(data.resistances)}, sources={len(data.sources)}, loads={len(data.loads)}")
+    print(f"[DEBUG] 输入: nodes={len(data.nodes)}, resistances={len(data.resistances)}, sources={len(data.sources)}, loads={len(data.loads)}, copper_pours={len(data.copper_pours)}")
     print(f"[DEBUG] sources: {[(s.node_id, s.voltage) for s in data.sources]}")
     print(f"[DEBUG] loads: {[(l.node_id, l.current) for l in data.loads]}")
 
@@ -271,6 +399,12 @@ def build_mesh_and_solve(data: KipidaInput) -> Dict[str, float]:
                 v = str_to_int[best.id]
                 if u != v:
                     m.add_edge_direct(u, v, G_PAD)
+
+    # 5b. 铺铜网格化与融合
+    next_node_id = mesh_copper_pours(
+        data, m, str_to_int, node_net, next_node_id,
+        active_nets, unique_nodes, net_layer_junctions,
+    )
 
     # 6. 转换 sources / loads
     sources = []
@@ -459,6 +593,9 @@ def generate_plot_images(mesh_points: list, mesh_resolution: float = 0.5, all_la
             if abs(vmax - vmin) < 1e-9:
                 vmin -= 0.001; vmax += 0.001
 
+        # 实际压降（用于标题显示）
+        actual_drop = next((r.max_drop for r in net_results if r.net == net), vmax - vmin)
+
         net_img = NetPlotImages()
 
         # ── 3D 散点图 ─────────────────────────────────────────
@@ -470,7 +607,7 @@ def generate_plot_images(mesh_points: list, mesh_resolution: float = 0.5, all_la
         ax = fig.add_subplot(111, projection='3d')
         sc = ax.scatter(xs, ys, zs_mapped, c=vs, cmap='viridis', vmin=vmin, vmax=vmax, s=18)
         plt.colorbar(sc, ax=ax, label='Voltage (V)', shrink=0.7)
-        ax.set_title(f"Rail: {net}  Drop: {vmax-vmin:.4f} V")
+        ax.set_title(f"Rail: {net}  Drop: {actual_drop:.4f} V")
         ax.set_xlabel('X (mm)'); ax.set_ylabel('Y (mm)'); ax.set_zlabel('L (pseudo)')
         net_img.view_3d = fig_to_b64(fig, f"{net}_3d.png")
 
@@ -493,7 +630,7 @@ def generate_plot_images(mesh_points: list, mesh_resolution: float = 0.5, all_la
             fig2, ax2 = plt.subplots(figsize=(7, 5), constrained_layout=True)
             sc2 = ax2.scatter(lxs, lys, c=lvs, cmap='viridis', vmin=vmin, vmax=vmax, s=40)
             plt.colorbar(sc2, ax=ax2, label='Voltage (V)')
-            ax2.set_title(f"Rail: {net}  Layer {layer_id}  Drop: {vmax-vmin:.4f} V")
+            ax2.set_title(f"Rail: {net}  Layer {layer_id}  Drop: {actual_drop:.4f} V")
             ax2.set_xlabel('X (mm)'); ax2.set_ylabel('Y (mm)')
             ax2.set_aspect('equal', 'box')
             net_img.layers[str(layer_id)] = fig_to_b64(fig2, f"{net}_layer{layer_id}.png")
@@ -597,8 +734,11 @@ async def analyze_pcb(data: KipidaInput):
 
         net_results = compute_net_results(data, voltages)
         print(f"[DEBUG] net_results: {[(r.net, r.max_drop, r.min_voltage, r.max_voltage) for r in net_results]}")
-        # 收集所有铜箔层 ID（从电阻数据中提取）
-        all_layers = sorted(set(r.layer for r in data.resistances if r.layer is not None and r.layer > 0))
+        # 收集所有铜箔层 ID（走线 + 铺铜层）
+        all_layers = sorted(
+            set(r.layer for r in data.resistances if r.layer is not None and r.layer > 0)
+            | set(p.layer for p in data.copper_pours if p.layer is not None and p.layer > 0)
+        )
         plot_images = generate_plot_images(mesh_points, data.mesh_resolution or 0.5, all_layers, net_results, data.max_drop_pct or 5.0)
 
         overall_max_drop = max((r.max_drop for r in net_results), default=0.0)
