@@ -95,6 +95,31 @@ export class PcbExtractor {
       }
     }
 
+    // 补充扫描：通过 pcb_PrimitivePad 捕获直插式焊盘（getAllPinsByPrimitiveId 可能遗漏）
+    const beforeSupp = pads.length;
+    const padKeySet = new Set(pads.map(p => `${p.net}|${p.x.toFixed(2)}|${p.y.toFixed(2)}`));
+    for (const netName of netNames) {
+      if (!netName || netName.trim() === '') continue;
+      try {
+        const padList = await eda.pcb_PrimitivePad.getAll(undefined, netName);
+        for (const pad of padList) {
+          const p = this.extractPad(pad, undefined, undefined, netName);
+          if (!p) continue;
+          const key = `${p.net}|${p.x.toFixed(2)}|${p.y.toFixed(2)}`;
+          if (!padKeySet.has(key)) {
+            pads.push(p);
+            padKeySet.add(key);
+            console.log(`[PcbExtractor][DIAG] 补充直插焊盘: net=${p.net} pos=(${p.x.toFixed(1)},${p.y.toFixed(1)}) layer=${p.layer} ref=${p.ref_des}`);
+          }
+        }
+      } catch {}
+    }
+    console.log(`[PcbExtractor] 焊盘总数: ${pads.length} (组件焊盘=${beforeSupp}, 补充直插=${pads.length - beforeSupp})`);
+    // 诊断：打印所有焊盘的 layer 分布
+    const layerDist: Record<string, number> = {};
+    for (const p of pads) { const k = String(p.layer ?? 'null'); layerDist[k] = (layerDist[k] || 0) + 1; }
+    console.log(`[PcbExtractor][DIAG] 焊盘 layer 分布:`, JSON.stringify(layerDist));
+
     // 提取铺铜（PrimitiveFill + PrimitivePoured 实际填充区域）
     const copperPours: EasyEDA_CopperPour[] = [];
 
@@ -249,9 +274,12 @@ export class PcbExtractor {
       const y = primitive.getState_Y();
       const padNumber = primitive.getState_PadNumber();
       const padShape = primitive.getState_Pad();
-      const layer = typeof primitive.getState_Layer === 'function'
+
+      // EPCB_LayerId.MULTI = 12: through-hole pad spanning all layers → treat like via (layer=undefined)
+      const rawLayer = typeof primitive.getState_Layer === 'function'
         ? primitive.getState_Layer() as number
         : undefined;
+      const layer = rawLayer === 12 ? undefined : rawLayer;
 
       let netName = fallbackNet;
       if (!netName) {

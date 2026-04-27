@@ -305,6 +305,21 @@ def build_mesh_and_solve(data: KipidaInput) -> Dict[str, float]:
             unique_nodes.append(node)
     str_to_int: Dict[str, int] = seen
 
+    # 坐标去重：pad/via 可能因两次扫描产生不同 ID 但相同坐标的重复节点
+    coord_seen: set = set()
+    deduped: list = []
+    new_str_to_int: Dict[str, int] = {}
+    for node in unique_nodes:
+        if node.type in ('pad', 'via'):
+            key = f"{node.net}|{node.x:.1f}|{node.y:.1f}|{node.type}"
+            if key in coord_seen:
+                continue
+            coord_seen.add(key)
+        new_str_to_int[node.id] = len(deduped)
+        deduped.append(node)
+    unique_nodes = deduped
+    str_to_int = new_str_to_int
+
     # 3. 构建 Mesh，node_coords 统一存 (x, y, layer)
     # 额外维护 node_net dict 记录每个节点所属 net（含插值节点）
     m = Mesh()
@@ -509,6 +524,10 @@ def build_mesh_and_solve(data: KipidaInput) -> Dict[str, float]:
             if is_pad: pad_valid += 1
 
     print(f"[KiPIDA] 绘图节点: {len(mesh_points)}, pad={pad_valid}, via_NaN={pad_nan}")
+    # 打印所有 pad/via 绘图节点，便于与 PCB 对照
+    for pt in mesh_points:
+        if pt[5] in ('pad', 'via'):
+            print(f"[KiPIDA][DIAG] {pt[5]} net={pt[3]} x={pt[0]:.1f}mil y={pt[1]:.1f}mil layer={pt[2]} voltage={pt[4]:.6f}V")
     return result, mesh_points
 
 
@@ -606,11 +625,11 @@ def generate_plot_images(mesh_points: list, mesh_resolution: float = 0.5, all_la
         # pad 节点 (layer>0)：只出现在自己所属的层
         # junction/插值节点 (layer>0)：只出现在自己所属的层
         # 绘制范围：all_layers（含只有过孔的层）
-        via_pts = [(p[0], p[1], p[3]) for p in valid_points
-                   if len(p) > 4 and p[4] == 'via' and p[2] == -1]
+        # layer=-1 means spans all layers (via or through-hole pad)
+        all_layer_pts = [(p[0], p[1], p[3]) for p in valid_points if p[2] == -1]
         for layer_id in sorted(all_layers):
             specific_pts = [(p[0], p[1], p[3]) for p in valid_points if p[2] == layer_id]
-            layer_all = specific_pts + via_pts
+            layer_all = specific_pts + all_layer_pts
             if not layer_all:
                 continue
             lxs = [p[0] for p in layer_all]
