@@ -63,6 +63,8 @@ export interface Kipida_Node {
   ref_des?: string;
   device_name?: string;
   voltage?: number;
+  width?: number;
+  height?: number;
 }
 
 export interface Kipida_Resistance {

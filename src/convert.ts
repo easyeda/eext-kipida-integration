@@ -114,7 +114,7 @@ export class PcbDataConverter {
     const addedIds = new Set<string>();
 
     for (const pad of pads) {
-      const node = this.createNode(pad.x, pad.y, pad.net, 'pad', pad.pad_number, pad.ref_des, pad.device_name, pad.layer);
+      const node = this.createNode(pad.x, pad.y, pad.net, 'pad', pad.pad_number, pad.ref_des, pad.device_name, pad.layer, pad.width, pad.height);
       if (node && !addedIds.has(node.id)) {
         nodes.push(node);
         addedIds.add(node.id);
@@ -122,7 +122,7 @@ export class PcbDataConverter {
     }
 
     for (const via of vias) {
-      const node = this.createNode(via.x, via.y, via.net, 'via');
+      const node = this.createNode(via.x, via.y, via.net, 'via', undefined, undefined, undefined, undefined, via.diameter, via.diameter);
       if (node && !addedIds.has(node.id)) {
         nodes.push(node);
         addedIds.add(node.id);
@@ -141,7 +141,9 @@ export class PcbDataConverter {
     padNumber?: string,
     refDes?: string,
     deviceName?: string,
-    layer?: number
+    layer?: number,
+    width?: number,
+    height?: number
   ): Kipida_Node | null {
     const key = this.makeNodeKey(net, x, y, type, layer);
 
@@ -150,7 +152,7 @@ export class PcbDataConverter {
     }
 
     const id = this.generateId('node');
-    const node: Kipida_Node = { id, net, type, x, y, pad_number: padNumber, ref_des: refDes, device_name: deviceName, layer };
+    const node: Kipida_Node = { id, net, type, x, y, pad_number: padNumber, ref_des: refDes, device_name: deviceName, layer, width, height };
 
     this.nodeMap.set(key, node);
     return node;

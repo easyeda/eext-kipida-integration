@@ -39,6 +39,8 @@ class Node(BaseModel):
     y: float
     layer: Optional[int] = None
     voltage: Optional[float] = None
+    width: Optional[float] = None
+    height: Optional[float] = None
 
 
 class Resistance(BaseModel):
@@ -515,12 +517,14 @@ def build_mesh_and_solve(data: KipidaInput) -> Dict[str, float]:
         is_pad = old_idx < len(unique_nodes) and unique_nodes[old_idx].type == 'pad'
         is_via = old_idx < len(unique_nodes) and unique_nodes[old_idx].type == 'via'
         node_type = 'pad' if is_pad else ('via' if is_via else 'junction')
+        node_w = (unique_nodes[old_idx].width or 0.0) if old_idx < len(unique_nodes) else 0.0
+        node_h = (unique_nodes[old_idx].height or 0.0) if old_idx < len(unique_nodes) else 0.0
         if not _math.isfinite(voltage):
             nan_count += 1
             if is_pad: pad_nan += 1
             continue
         if net:
-            mesh_points.append((x_mil, y_mil, layer, net, voltage, node_type))
+            mesh_points.append((x_mil, y_mil, layer, net, voltage, node_type, node_w, node_h))
             if is_pad: pad_valid += 1
 
     print(f"[KiPIDA] 绘图节点: {len(mesh_points)}, pad={pad_valid}, via_NaN={pad_nan}")
@@ -531,7 +535,7 @@ def build_mesh_and_solve(data: KipidaInput) -> Dict[str, float]:
     return result, mesh_points
 
 
-def generate_plot_images(mesh_points: list, mesh_resolution: float = 0.5, all_layers: list = None, net_results: list = None, max_drop_pct: float = 5.0) -> Dict[str, 'NetPlotImages']:
+def generate_plot_images(mesh_points: list, mesh_resolution: float = 0.5, all_layers: list = None, net_results: list = None, max_drop_pct: float = 5.0, resistances=None, node_voltages=None, nodes=None) -> Dict[str, 'NetPlotImages']:
     """
     mesh_points: [(x_mil, y_mil, layer, net, voltage), ...]
     """
@@ -539,6 +543,10 @@ def generate_plot_images(mesh_points: list, mesh_resolution: float = 0.5, all_la
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
     from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
+    from matplotlib.patches import Rectangle, Circle
+    from matplotlib.colors import Normalize
+    from matplotlib.cm import ScalarMappable
+    from matplotlib.collections import LineCollection
     import io, base64, math, os
 
     OUTPUT_DIR = os.path.join(os.path.dirname(__file__), 'output')
@@ -563,6 +571,28 @@ def generate_plot_images(mesh_points: list, mesh_resolution: float = 0.5, all_la
     if net_results is None:
         net_results = []
 
+    # Pre-compute track segments per net/layer from resistances
+    # track_segs[net][layer] = [(x1,y1,x2,y2,width_mm,avg_voltage), ...]
+    track_segs: Dict[str, Dict[int, list]] = {}
+    if resistances and node_voltages and nodes:
+        node_pos = {n.id: (n.x * MIL_TO_MM, n.y * MIL_TO_MM) for n in nodes}
+        for res in resistances:
+            p1 = node_pos.get(res.start_node)
+            p2 = node_pos.get(res.end_node)
+            if not p1 or not p2:
+                continue
+            v1 = node_voltages.get(res.start_node, float('nan'))
+            v2 = node_voltages.get(res.end_node, float('nan'))
+            if not math.isfinite(v1) and not math.isfinite(v2):
+                continue
+            avg_v = v1 if math.isfinite(v1) else v2
+            if math.isfinite(v1) and math.isfinite(v2):
+                avg_v = (v1 + v2) / 2
+            w_mm = res.width * MIL_TO_MM
+            track_segs.setdefault(res.net, {}).setdefault(res.layer, []).append(
+                (p1[0], p1[1], p2[0], p2[1], w_mm, avg_v)
+            )
+
     # 按 net 建立固定色阶：vmax=source电压, vmin=source电压*(1-max_drop_pct/100)
     net_scale: Dict[str, tuple] = {}
     for r in net_results:
@@ -574,11 +604,15 @@ def generate_plot_images(mesh_points: list, mesh_resolution: float = 0.5, all_la
     for item in mesh_points:
         x_mil, y_mil, layer, net, voltage = item[0], item[1], item[2], item[3], item[4]
         node_type = item[5] if len(item) > 5 else 'junction'
+        pad_w = item[6] if len(item) > 6 else 0.0
+        pad_h = item[7] if len(item) > 7 else 0.0
         if not math.isfinite(voltage) or not net:
             continue
         x_mm = x_mil * MIL_TO_MM
         y_mm = y_mil * MIL_TO_MM
-        net_points.setdefault(net, []).append((x_mm, y_mm, layer, voltage, node_type))
+        w_mm = pad_w * MIL_TO_MM
+        h_mm = pad_h * MIL_TO_MM
+        net_points.setdefault(net, []).append((x_mm, y_mm, layer, voltage, node_type, w_mm, h_mm))
 
     result = {}
     for net, points in net_points.items():
@@ -607,17 +641,34 @@ def generate_plot_images(mesh_points: list, mesh_resolution: float = 0.5, all_la
 
         net_img = NetPlotImages()
 
-        # ── 3D 散点图 ─────────────────────────────────────────
-        layer_ids = sorted(set(p[2] for p in valid_points))
-        layer_to_z = {lid: 10.0 - i for i, lid in enumerate(layer_ids)}
-        zs_mapped = [layer_to_z[p[2]] for p in valid_points]
+        # ── 3D 散点图（快速，表达层分布与电压分布）─────────────
+        # 几何精度（走线宽度/焊盘/过孔尺寸）在 2D 层图中体现
+        all_layer_ids = sorted(set(p[2] for p in valid_points if p[2] != -1))
+        all_layer_pts_3d = [p for p in valid_points if p[2] == -1]
+        layer_to_z = {lid: float(len(all_layer_ids) - i) for i, lid in enumerate(all_layer_ids)}
 
-        fig = plt.figure(figsize=(7, 5), constrained_layout=True)
+        fig = plt.figure(figsize=(8, 6), constrained_layout=True)
         ax = fig.add_subplot(111, projection='3d')
-        sc = ax.scatter(xs, ys, zs_mapped, c=vs, cmap='viridis', vmin=vmin, vmax=vmax, s=18)
-        plt.colorbar(sc, ax=ax, label='Voltage (V)', shrink=0.7)
+
+        for layer_id in all_layer_ids:
+            z = layer_to_z[layer_id]
+            layer_pts = [p for p in valid_points if p[2] == layer_id] + all_layer_pts_3d
+            if not layer_pts:
+                continue
+            lxs = [p[0] for p in layer_pts]
+            lys = [p[1] for p in layer_pts]
+            lvs = [p[3] for p in layer_pts]
+            sizes = [30 if p[4] in ('pad', 'via') else 8 for p in layer_pts]
+            ax.scatter(lxs, lys, [z] * len(lxs), c=lvs, cmap='viridis', vmin=vmin, vmax=vmax, s=sizes)
+
+        sm = ScalarMappable(cmap=plt.cm.viridis, norm=Normalize(vmin=vmin, vmax=vmax))
+        sm.set_array([])
+        plt.colorbar(sm, ax=ax, label='Voltage (V)', shrink=0.7)
         ax.set_title(f"Rail: {net}  Drop: {actual_drop:.4f} V")
-        ax.set_xlabel('X (mm)'); ax.set_ylabel('Y (mm)'); ax.set_zlabel('L (pseudo)')
+        ax.set_xlabel('X (mm)'); ax.set_ylabel('Y (mm)'); ax.set_zlabel('Layer')
+        if all_layer_ids:
+            ax.set_zticks(list(layer_to_z.values()))
+            ax.set_zticklabels([str(lid) for lid in all_layer_ids])
         net_img.view_3d = fig_to_b64(fig, f"{net}_3d.png")
 
         # ── 各层 2D 图 ────────────────────────────────────────
@@ -626,22 +677,83 @@ def generate_plot_images(mesh_points: list, mesh_resolution: float = 0.5, all_la
         # junction/插值节点 (layer>0)：只出现在自己所属的层
         # 绘制范围：all_layers（含只有过孔的层）
         # layer=-1 means spans all layers (via or through-hole pad)
-        all_layer_pts = [(p[0], p[1], p[3]) for p in valid_points if p[2] == -1]
+        from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+
+        all_layer_pts = [p for p in valid_points if p[2] == -1]
+        norm = Normalize(vmin=vmin, vmax=vmax)
+        cmap_obj = plt.cm.viridis
+
         for layer_id in sorted(all_layers):
-            specific_pts = [(p[0], p[1], p[3]) for p in valid_points if p[2] == layer_id]
+            specific_pts = [p for p in valid_points if p[2] == layer_id]
             layer_all = specific_pts + all_layer_pts
-            if not layer_all:
+            if not layer_all and not track_segs.get(net, {}).get(layer_id):
                 continue
-            lxs = [p[0] for p in layer_all]
-            lys = [p[1] for p in layer_all]
-            lvs = [p[2] for p in layer_all]
 
             fig2, ax2 = plt.subplots(figsize=(7, 5), constrained_layout=True)
-            sc2 = ax2.scatter(lxs, lys, c=lvs, cmap='viridis', vmin=vmin, vmax=vmax, s=40)
-            plt.colorbar(sc2, ax=ax2, label='Voltage (V)')
+
+            # ── 走线（数据坐标填充矩形，按实际宽度）────────────────
+            segs = track_segs.get(net, {}).get(layer_id, [])
+            if segs:
+                import numpy as np
+                for s in segs:
+                    x1, y1, x2, y2, w_mm, avg_v = s
+                    dx, dy = x2 - x1, y2 - y1
+                    seg_len = math.sqrt(dx * dx + dy * dy)
+                    color = cmap_obj(norm(avg_v))
+                    hw = w_mm / 2
+                    if seg_len >= 1e-9:
+                        px, py = -dy / seg_len, dx / seg_len
+                        corners = [
+                            (x1 + px * hw, y1 + py * hw),
+                            (x2 + px * hw, y2 + py * hw),
+                            (x2 - px * hw, y2 - py * hw),
+                            (x1 - px * hw, y1 - py * hw),
+                        ]
+                        ax2.add_patch(plt.Polygon(corners, facecolor=color, edgecolor='none', zorder=1))
+                    # 圆形端帽：填充转折处三角缺口
+                    ax2.add_patch(Circle((x1, y1), hw, facecolor=color, edgecolor='none', zorder=1))
+                    ax2.add_patch(Circle((x2, y2), hw, facecolor=color, edgecolor='none', zorder=1))
+
+            # ── 焊盘（Rectangle）和过孔（Circle）────────────────
+            def _is_rect_pad(p):
+                return p[4] == 'pad' and len(p) > 6 and p[5] > 0 and p[6] > 0
+
+            def _is_via(p):
+                return p[4] == 'via' and len(p) > 6 and p[5] > 0
+
+            pad_pts   = [p for p in layer_all if _is_rect_pad(p)]
+            via_pts   = [p for p in layer_all if _is_via(p)]
+            other_pts = [p for p in layer_all if not _is_rect_pad(p) and not _is_via(p)]
+
+            for p in pad_pts:
+                px, py, pv, pw, ph = p[0], p[1], p[3], p[5], p[6]
+                color = cmap_obj(norm(pv))
+                ax2.add_patch(Rectangle(
+                    (px - pw / 2, py - ph / 2), pw, ph,
+                    facecolor=color, edgecolor='none', zorder=3
+                ))
+
+            for p in via_pts:
+                px, py, pv, pr = p[0], p[1], p[3], p[5] / 2
+                color = cmap_obj(norm(pv))
+                ax2.add_patch(Circle(
+                    (px, py), pr,
+                    facecolor=color, edgecolor='none', zorder=3
+                ))
+
+            if other_pts:
+                lxs = [p[0] for p in other_pts]
+                lys = [p[1] for p in other_pts]
+                lvs = [p[3] for p in other_pts]
+                ax2.scatter(lxs, lys, c=lvs, cmap='viridis', vmin=vmin, vmax=vmax, s=10, zorder=2)
+
+            sm = ScalarMappable(cmap=cmap_obj, norm=norm)
+            sm.set_array([])
+            plt.colorbar(sm, ax=ax2, label='Voltage (V)')
             ax2.set_title(f"Rail: {net}  Layer {layer_id}  Drop: {actual_drop:.4f} V")
             ax2.set_xlabel('X (mm)'); ax2.set_ylabel('Y (mm)')
             ax2.set_aspect('equal', 'box')
+            ax2.autoscale_view()
             net_img.layers[str(layer_id)] = fig_to_b64(fig2, f"{net}_layer{layer_id}.png")
 
         result[net] = net_img
@@ -748,7 +860,7 @@ async def analyze_pcb(data: KipidaInput):
             set(r.layer for r in data.resistances if r.layer is not None and r.layer > 0)
             | set(p.layer for p in data.copper_pours if p.layer is not None and p.layer > 0)
         )
-        plot_images = generate_plot_images(mesh_points, data.mesh_resolution or 0.5, all_layers, net_results, data.max_drop_pct or 5.0)
+        plot_images = generate_plot_images(mesh_points, data.mesh_resolution or 0.5, all_layers, net_results, data.max_drop_pct or 5.0, data.resistances, voltages, data.nodes)
 
         overall_max_drop = max((r.max_drop for r in net_results), default=0.0)
         total_current = sum(l.current for l in data.loads)

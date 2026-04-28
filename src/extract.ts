@@ -274,6 +274,10 @@ export class PcbExtractor {
       const y = primitive.getState_Y();
       const padNumber = primitive.getState_PadNumber();
       const padShape = primitive.getState_Pad();
+      // TPCB_PrimitivePadShape is a tuple: [shapeType, width, height, ...]
+      // index 1 = width (mil), index 2 = height (mil)
+      const padW = Array.isArray(padShape) && typeof padShape[1] === 'number' ? padShape[1] : 0;
+      const padH = Array.isArray(padShape) && typeof padShape[2] === 'number' ? padShape[2] : 0;
 
       // EPCB_LayerId.MULTI = 12: through-hole pad spanning all layers → treat like via (layer=undefined)
       const rawLayer = typeof primitive.getState_Layer === 'function'
@@ -297,8 +301,8 @@ export class PcbExtractor {
         net: netName,
         x, y,
         pad_number: padNumber || '?',
-        width: padShape?.xSize || 0.6,
-        height: padShape?.ySize || 0.6,
+        width: padW || 0.6,
+        height: padH || 0.6,
         layer: layer || undefined,
         ref_des: refDes || undefined,
         device_name: deviceName || undefined,
