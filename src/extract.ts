@@ -60,6 +60,8 @@ export class PcbExtractor {
     }
 
     // 提取器件焊盘（含 ref_des）
+    // padKeySet 从一开始就维护，防止 getAllPinsByPrimitiveId 对 PTH 焊盘每层返回一条记录导致重复
+    const padKeySet = new Set<string>();
     try {
       const components = await eda.pcb_PrimitiveComponent.getAll();
       for (const comp of components) {
@@ -75,7 +77,12 @@ export class PcbExtractor {
           if (!pins) continue;
           for (const pin of pins) {
             const pad = this.extractPad(pin, refDes, deviceName);
-            if (pad) pads.push(pad);
+            if (!pad) continue;
+            const key = `${pad.net}|${pad.x.toFixed(2)}|${pad.y.toFixed(2)}`;
+            if (!padKeySet.has(key)) {
+              pads.push(pad);
+              padKeySet.add(key);
+            }
           }
         } catch (e) {
           console.warn(`[PcbExtractor] 提取器件 ${refDes} 焊盘失败:`, e);
@@ -89,7 +96,12 @@ export class PcbExtractor {
           const padList = await eda.pcb_PrimitivePad.getAll(undefined, netName);
           for (const pad of padList) {
             const p = this.extractPad(pad, undefined, undefined, netName);
-            if (p) pads.push(p);
+            if (!p) continue;
+            const key = `${p.net}|${p.x.toFixed(2)}|${p.y.toFixed(2)}`;
+            if (!padKeySet.has(key)) {
+              pads.push(p);
+              padKeySet.add(key);
+            }
           }
         } catch {}
       }
@@ -97,7 +109,6 @@ export class PcbExtractor {
 
     // 补充扫描：通过 pcb_PrimitivePad 捕获直插式焊盘（getAllPinsByPrimitiveId 可能遗漏）
     const beforeSupp = pads.length;
-    const padKeySet = new Set(pads.map(p => `${p.net}|${p.x.toFixed(2)}|${p.y.toFixed(2)}`));
     for (const netName of netNames) {
       if (!netName || netName.trim() === '') continue;
       try {
@@ -109,16 +120,11 @@ export class PcbExtractor {
           if (!padKeySet.has(key)) {
             pads.push(p);
             padKeySet.add(key);
-            console.log(`[PcbExtractor][DIAG] 补充直插焊盘: net=${p.net} pos=(${p.x.toFixed(1)},${p.y.toFixed(1)}) layer=${p.layer} ref=${p.ref_des}`);
           }
         }
       } catch {}
     }
     console.log(`[PcbExtractor] 焊盘总数: ${pads.length} (组件焊盘=${beforeSupp}, 补充直插=${pads.length - beforeSupp})`);
-    // 诊断：打印所有焊盘的 layer 分布
-    const layerDist: Record<string, number> = {};
-    for (const p of pads) { const k = String(p.layer ?? 'null'); layerDist[k] = (layerDist[k] || 0) + 1; }
-    console.log(`[PcbExtractor][DIAG] 焊盘 layer 分布:`, JSON.stringify(layerDist));
 
     // 提取铺铜（PrimitiveFill + PrimitivePoured 实际填充区域）
     const copperPours: EasyEDA_CopperPour[] = [];
@@ -132,10 +138,6 @@ export class PcbExtractor {
         const layer = fill.getState_Layer() as number;
         const polygon = fill.getState_ComplexPolygon();
         const rawVertices = this.parsePolygonVertices(polygon.getSource());
-        // 诊断：打印原始顶点坐标（前3个），用于确认单位和坐标系
-        if (copperPours.length === 0 && rawVertices.length > 0) {
-          console.log(`[PcbExtractor][DIAG] PrimitiveFill raw vertices (前3):`, JSON.stringify(rawVertices.slice(0, 3)));
-        }
         if (rawVertices.length >= 3) {
           copperPours.push({ net, layer, vertices: rawVertices, is_fill: true });
         }
@@ -145,7 +147,7 @@ export class PcbExtractor {
       console.warn('[PcbExtractor] 提取 PrimitiveFill 失败:', e);
     }
 
-    // 覆铜边框（PrimitivePour）- 与 PrimitiveFill 使用相同 API，坐标已是 canvas mil
+    // 覆铜边框（PrimitivePour）
     try {
       const pours = await eda.pcb_PrimitivePour.getAll();
       const beforeCount = copperPours.length;
@@ -164,18 +166,6 @@ export class PcbExtractor {
       console.warn('[PcbExtractor] 提取 PrimitivePour 失败:', e);
     }
 
-    // 诊断：对比焊盘坐标和铺铜坐标范围
-    if (pads.length > 0 && copperPours.length > 0) {
-      const padXs = pads.map(p => p.x), padYs = pads.map(p => p.y);
-      console.log(`[PcbExtractor][DIAG] 焊盘坐标范围(mil): x=[${Math.min(...padXs).toFixed(1)}, ${Math.max(...padXs).toFixed(1)}] y=[${Math.min(...padYs).toFixed(1)}, ${Math.max(...padYs).toFixed(1)}]`);
-      const pourVerts = copperPours[0].vertices;
-      const pvxs = pourVerts.map(v => v.x), pvys = pourVerts.map(v => v.y);
-      console.log(`[PcbExtractor][DIAG] 铺铜[0]坐标范围(mil): x=[${Math.min(...pvxs).toFixed(1)}, ${Math.max(...pvxs).toFixed(1)}] y=[${Math.min(...pvys).toFixed(1)}, ${Math.max(...pvys).toFixed(1)}]`);
-      if (tracks.length > 0) {
-        const tkXs = tracks.flatMap(t => [t.x1, t.x2]), tkYs = tracks.flatMap(t => [t.y1, t.y2]);
-        console.log(`[PcbExtractor][DIAG] 走线坐标范围(mil): x=[${Math.min(...tkXs).toFixed(1)}, ${Math.max(...tkXs).toFixed(1)}] y=[${Math.min(...tkYs).toFixed(1)}, ${Math.max(...tkYs).toFixed(1)}]`);
-      }
-    }
     console.log(`[PcbExtractor] 提取完成: tracks=${tracks.length}, vias=${vias.length}, pads=${pads.length}, copperPours=${copperPours.length}`);
     return { tracks, vias, pads, copperPours, layerNames, outerLayerIds };
   }

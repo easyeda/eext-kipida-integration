@@ -162,7 +162,6 @@ def mesh_copper_pours(
     将铺铜多边形网格化并融合到 Mesh 中。
     返回更新后的 next_node_id。
     """
-    print(f"[DEBUG] mesh_copper_pours 调用: copper_pours={len(data.copper_pours)}, active_nets={active_nets}")
     if not data.copper_pours:
         return next_node_id
 
@@ -259,6 +258,89 @@ def mesh_copper_pours(
     return next_node_id
 
 
+def _log_input_summary(data: 'KipidaInput') -> None:
+    """打印结构化输入摘要，用于与 KiCad 原始数据对比，验证传输完整性。"""
+    sep = "=" * 60
+
+    # ── 1. 总览 ──────────────────────────────────────────────
+    print(sep)
+    print("[INPUT] 总览")
+    print(f"  nodes        : {len(data.nodes)}")
+    print(f"  resistances  : {len(data.resistances)}")
+    print(f"  connections  : {len(data.connections)}")
+    print(f"  sources      : {len(data.sources)}")
+    print(f"  loads        : {len(data.loads)}")
+    print(f"  copper_pours : {len(data.copper_pours)}")
+    if data.metadata:
+        m = data.metadata
+        print(f"  metadata     : nets={m.total_nets} tracks={m.total_tracks} vias={m.total_vias} pads={m.total_pads}")
+
+    # ── 2. 节点分类 ──────────────────────────────────────────
+    from collections import defaultdict
+    type_count: dict = defaultdict(int)
+    net_node_count: dict = defaultdict(int)
+    for n in data.nodes:
+        type_count[n.type] += 1
+        net_node_count[n.net] += 1
+    print("\n[INPUT] 节点类型分布")
+    for t, c in sorted(type_count.items()):
+        print(f"  {t:10s}: {c}")
+    print("\n[INPUT] 各 net 节点数")
+    for net, c in sorted(net_node_count.items()):
+        print(f"  {net:20s}: {c}")
+
+    # ── 3. 焊盘详情 ──────────────────────────────────────────
+    pads = [n for n in data.nodes if n.type == 'pad']
+    print(f"\n[INPUT] 焊盘 ({len(pads)} 个)")
+    for p in pads:
+        w = p.width or 0.0
+        h = p.height or 0.0
+        print(f"  net={p.net:20s} layer={str(p.layer):4s} pos=({p.x:.1f},{p.y:.1f})mil  size={w:.1f}x{h:.1f}mil")
+
+    # ── 4. 过孔详情 ──────────────────────────────────────────
+    vias = [n for n in data.nodes if n.type == 'via']
+    print(f"\n[INPUT] 过孔 ({len(vias)} 个)")
+    for v in vias:
+        d = v.width or 0.0
+        print(f"  net={v.net:20s} pos=({v.x:.1f},{v.y:.1f})mil  diameter={d:.1f}mil")
+
+    # ── 5. 走线电阻统计 ──────────────────────────────────────
+    print(f"\n[INPUT] 走线电阻 ({len(data.resistances)} 条)")
+    net_res: dict = defaultdict(list)
+    for r in data.resistances:
+        net_res[r.net].append(r)
+    for net, rs in sorted(net_res.items()):
+        widths = [r.width for r in rs]
+        lengths = [r.length for r in rs]
+        layers = sorted(set(r.layer for r in rs))
+        print(f"  net={net:20s} count={len(rs):4d}  width=[{min(widths):.2f},{max(widths):.2f}]mil"
+              f"  length=[{min(lengths):.1f},{max(lengths):.1f}]mil  layers={layers}")
+
+    # ── 6. 电源 / 负载 ───────────────────────────────────────
+    print(f"\n[INPUT] Sources ({len(data.sources)} 个)")
+    for s in data.sources:
+        node = next((n for n in data.nodes if n.id == s.node_id), None)
+        net = node.net if node else "?"
+        print(f"  node={s.node_id}  net={net}  voltage={s.voltage}V")
+
+    print(f"\n[INPUT] Loads ({len(data.loads)} 个)")
+    net_load: dict = defaultdict(list)
+    for l in data.loads:
+        node = next((n for n in data.nodes if n.id == l.node_id), None)
+        net = node.net if node else "?"
+        net_load[net].append(l.current)
+    for net, currents in sorted(net_load.items()):
+        print(f"  net={net:20s} count={len(currents):4d}  total={sum(currents):.3f}A  each={currents[0]:.3f}A")
+
+    # ── 7. 铺铜 ──────────────────────────────────────────────
+    if data.copper_pours:
+        print(f"\n[INPUT] 铺铜 ({len(data.copper_pours)} 个)")
+        for cp in data.copper_pours:
+            print(f"  net={cp.net:20s} layer={cp.layer}  vertices={len(cp.vertices)}")
+
+    print(sep)
+
+
 def build_mesh_and_solve(data: KipidaInput) -> Dict[str, float]:
     """
     将 EasyEDA 数据转换为 KiPIDA Mesh，调用真实 Solver 求解。
@@ -268,9 +350,7 @@ def build_mesh_and_solve(data: KipidaInput) -> Dict[str, float]:
     from mesh import Mesh
     from solver import Solver
 
-    print(f"[DEBUG] 输入: nodes={len(data.nodes)}, resistances={len(data.resistances)}, sources={len(data.sources)}, loads={len(data.loads)}, copper_pours={len(data.copper_pours)}")
-    print(f"[DEBUG] sources: {[(s.node_id, s.voltage) for s in data.sources]}")
-    print(f"[DEBUG] loads: {[(l.node_id, l.current) for l in data.loads]}")
+    _log_input_summary(data)
 
     # 1. 找出有 Source 的 net
     source_node_ids = {s.node_id for s in data.sources}
@@ -282,16 +362,6 @@ def build_mesh_and_solve(data: KipidaInput) -> Dict[str, float]:
     for node in data.nodes:
         if node.id in active_node_ids:
             active_nets.add(node.net)
-
-    print(f"[DEBUG] active_nets: {active_nets}")
-    # 检查 source/load node_id 是否能在 nodes 列表中找到
-    all_node_ids = {n.id for n in data.nodes}
-    missing_sources = source_node_ids - all_node_ids
-    missing_loads = load_node_ids - all_node_ids
-    if missing_sources:
-        print(f"[DEBUG] 警告: source node_id 在 nodes 中找不到: {missing_sources}")
-    if missing_loads:
-        print(f"[DEBUG] 警告: load node_id 在 nodes 中找不到: {missing_loads}")
 
     if not active_nets:
         raise ValueError("没有有效的电压源节点，无法求解")
@@ -385,12 +455,10 @@ def build_mesh_and_solve(data: KipidaInput) -> Dict[str, float]:
         if not net_layers:
             continue
 
-        if node.type == 'pad':
-            # 只连同层
-            layer = node.layer if node.layer is not None else -1
-            candidates = net_layers.get(layer, [])
+        if node.type == 'pad' and node.layer is not None and node.layer != -1:
+            # SMD 焊盘：只连同层最近的 junction
+            candidates = net_layers.get(node.layer, [])
             if not candidates:
-                # 回退：连全局最近
                 candidates = [j for jlist in net_layers.values() for j in jlist]
             if candidates:
                 best = min(candidates, key=lambda j: (j.x - node.x)**2 + (j.y - node.y)**2)
@@ -398,7 +466,7 @@ def build_mesh_and_solve(data: KipidaInput) -> Dict[str, float]:
                 if u != v:
                     m.add_edge_direct(u, v, G_PAD)
         else:
-            # via: 连每一层上最近的 junction
+            # PTH 焊盘 (layer=None/-1) 和 via：连每一层上最近的 junction（跨层桥接）
             for layer_junctions in net_layers.values():
                 if not layer_junctions:
                     continue
@@ -527,11 +595,6 @@ def build_mesh_and_solve(data: KipidaInput) -> Dict[str, float]:
             mesh_points.append((x_mil, y_mil, layer, net, voltage, node_type, node_w, node_h))
             if is_pad: pad_valid += 1
 
-    print(f"[KiPIDA] 绘图节点: {len(mesh_points)}, pad={pad_valid}, via_NaN={pad_nan}")
-    # 打印所有 pad/via 绘图节点，便于与 PCB 对照
-    for pt in mesh_points:
-        if pt[5] in ('pad', 'via'):
-            print(f"[KiPIDA][DIAG] {pt[5]} net={pt[3]} x={pt[0]:.1f}mil y={pt[1]:.1f}mil layer={pt[2]} voltage={pt[4]:.6f}V")
     return result, mesh_points
 
 
@@ -843,18 +906,7 @@ async def analyze_pcb(data: KipidaInput):
         import math
         voltages = {k: v for k, v in voltages.items() if math.isfinite(v)}
 
-        print(f"[DEBUG] 有效电压节点数: {len(voltages)}")
-        if voltages:
-            vvals = list(voltages.values())
-            print(f"[DEBUG] 电压范围: min={min(vvals):.6f}V, max={max(vvals):.6f}V")
-        # 检查 source/load 节点是否有电压
-        for s in data.sources:
-            print(f"[DEBUG] source {s.node_id} voltage={voltages.get(s.node_id, 'NOT FOUND')}")
-        for l in data.loads[:5]:  # 只打印前5个
-            print(f"[DEBUG] load {l.node_id} voltage={voltages.get(l.node_id, 'NOT FOUND')}")
-
         net_results = compute_net_results(data, voltages)
-        print(f"[DEBUG] net_results: {[(r.net, r.max_drop, r.min_voltage, r.max_voltage) for r in net_results]}")
         # 收集所有铜箔层 ID（走线 + 铺铜层）
         all_layers = sorted(
             set(r.layer for r in data.resistances if r.layer is not None and r.layer > 0)
