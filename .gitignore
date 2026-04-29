@@ -6,7 +6,10 @@ build/dist/
 # Python
 kipida-service/__pycache__/
 kipida-service/output/
+kipida-service/last_input.json
+kipida-service/compare_*.py
 *.pyc
+build_output.txt
 
 # Claude Code
 .claude/

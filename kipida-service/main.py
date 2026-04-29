@@ -148,114 +148,317 @@ analysis_state = {
 # KiPIDA Solver 集成
 # ============================================================
 
-def mesh_copper_pours(
-    data: 'KipidaInput',
-    m,
-    str_to_int: Dict[str, int],
-    node_net: Dict[int, str],
-    next_node_id: int,
-    active_nets: set,
-    unique_nodes: list,
-    net_layer_junctions: Dict[str, Dict[int, list]],
-) -> int:
+MIL_TO_MM = 0.0254
+COPPER_RESISTIVITY = 1.68e-5   # Ω·mm (match KiPIDA)
+COPPER_THICKNESS = 0.035       # mm (1oz)
+GRID_SIZE_MM = 0.5             # match KiPIDA default
+VIA_PLATING_THICKNESS = 0.025  # mm
+SUBSTRATE_HEIGHT = 0.5         # mm (default inter-layer distance)
+
+
+def _snap_to_grid(mesh, x_mm, y_mm, layer, net, grid_size_mm, grid_origin):
+    """Find nearest mesh grid node for a specific net. Returns node_id or None."""
+    ix = int(round((x_mm - grid_origin[0]) / grid_size_mm))
+    iy = int(round((y_mm - grid_origin[1]) / grid_size_mm))
+
+    nid = mesh.node_map.get((ix, iy, layer, net))
+    if nid is not None:
+        return nid
+
+    for dx in range(-1, 2):
+        for dy in range(-1, 2):
+            if dx == 0 and dy == 0:
+                continue
+            nid = mesh.node_map.get((ix + dx, iy + dy, layer, net))
+            if nid is not None:
+                return nid
+
+    for r in range(2, 6):
+        for dx in range(-r, r + 1):
+            for dy in range(-r, r + 1):
+                if abs(dx) < r and abs(dy) < r:
+                    continue
+                nid = mesh.node_map.get((ix + dx, iy + dy, layer, net))
+                if nid is not None:
+                    return nid
+    return None
+
+
+def _snap_to_grid_any_layer(mesh, x_mm, y_mm, all_layers, net, grid_size_mm, grid_origin):
+    """Snap to nearest grid node across all layers for a specific net. Returns node_id or None."""
+    for layer in all_layers:
+        nid = _snap_to_grid(mesh, x_mm, y_mm, layer, net, grid_size_mm, grid_origin)
+        if nid is not None:
+            return nid
+    return None
+
+
+def _build_geometry(data, active_nets):
     """
-    将铺铜多边形网格化并融合到 Mesh 中。
-    返回更新后的 next_node_id。
+    Build Shapely geometry per (net, layer) from EasyEDA data.
+    Coordinates converted from mil to mm.
+    Returns Dict[(net, layer), Polygon/MultiPolygon].
     """
-    if not data.copper_pours:
-        return next_node_id
+    from shapely.geometry import Polygon, LineString, box
+    from shapely.ops import unary_union
 
-    try:
-        from shapely.geometry import Polygon, Point
-        import numpy as np
-        import math as _math
-    except ImportError:
-        print("[KiPIDA] 警告: shapely 未安装，跳过铺铜网格化")
-        return next_node_id
+    node_by_id = {n.id: n for n in data.nodes}
+    geom_lists: Dict[tuple, list] = {}
 
-    COPPER_RESISTIVITY = 1.72e-5  # Ω·mm
-    COPPER_THICKNESS = 0.035       # mm (1oz)
-    R_SHEET = COPPER_RESISTIVITY / COPPER_THICKNESS  # Ω/square
-    MIL_TO_MM = 0.0254
-    res_mm = data.mesh_resolution or 0.1
-    res_mil = res_mm / MIL_TO_MM   # 坐标系为 mil，网格步长转换为 mil
-    G_CELL = 1.0 / R_SHEET         # 正方形网格 L/W=1，G = 1/R_sheet
-    G_PAD = 1e6
-
-    total_pour_nodes = 0
+    def _add(net, layer, poly):
+        if poly is not None and not poly.is_empty:
+            geom_lists.setdefault((net, layer), []).append(poly)
 
     for pour in data.copper_pours:
-        if pour.net not in active_nets:
+        if pour.net not in active_nets or len(pour.vertices) < 3:
             continue
-        if len(pour.vertices) < 3:
-            continue
-
+        coords = [(v['x'] * MIL_TO_MM, v['y'] * MIL_TO_MM) for v in pour.vertices]
         try:
-            poly = Polygon([(v['x'], v['y']) for v in pour.vertices])
+            poly = Polygon(coords)
             if not poly.is_valid:
                 poly = poly.buffer(0)
-            if poly.is_empty:
-                continue
+            _add(pour.net, pour.layer, poly)
         except Exception as e:
-            print(f"[KiPIDA] 铺铜多边形构建失败 net={pour.net}: {e}")
+            print(f"[FEM] copper pour polygon failed net={pour.net}: {e}")
+
+    for res in data.resistances:
+        if res.net not in active_nets or res.layer is None or res.layer <= 0:
+            continue
+        sn = node_by_id.get(res.start_node)
+        en = node_by_id.get(res.end_node)
+        if sn is None or en is None:
+            continue
+        x1, y1 = sn.x * MIL_TO_MM, sn.y * MIL_TO_MM
+        x2, y2 = en.x * MIL_TO_MM, en.y * MIL_TO_MM
+        half_w = res.width * MIL_TO_MM / 2
+        if half_w < 1e-6:
+            half_w = 0.05
+        try:
+            line = LineString([(x1, y1), (x2, y2)])
+            track_poly = line.buffer(half_w, cap_style=2)
+            _add(res.net, res.layer, track_poly)
+        except Exception:
+            pass
+
+    for node in data.nodes:
+        if node.net not in active_nets or node.type != 'pad':
+            continue
+        w_mm = (node.width or 0) * MIL_TO_MM
+        h_mm = (node.height or 0) * MIL_TO_MM
+        if w_mm < 1e-6 or h_mm < 1e-6:
+            continue
+        cx, cy = node.x * MIL_TO_MM, node.y * MIL_TO_MM
+        pad_poly = box(cx - w_mm / 2, cy - h_mm / 2, cx + w_mm / 2, cy + h_mm / 2)
+        layer = node.layer if node.layer and node.layer > 0 else None
+        if layer is not None:
+            _add(node.net, layer, pad_poly)
+        else:
+            for key in list(geom_lists.keys()):
+                if key[0] == node.net:
+                    _add(node.net, key[1], pad_poly)
+
+    result = {}
+    for key, polys in geom_lists.items():
+        try:
+            merged = unary_union(polys)
+            if not merged.is_empty:
+                result[key] = merged
+        except Exception as e:
+            print(f"[FEM] union failed {key}: {e}")
+    return result
+
+
+def _rasterize(geometry, grid_size_mm):
+    """
+    Rasterize geometry onto a regular grid, create Mesh with lateral conductance edges.
+    Replicates KiPIDA Mesher logic.
+    Returns (mesh, node_net_map, grid_origin, sorted_layers).
+    """
+    import numpy as np
+    import matplotlib.path
+    from mesh import Mesh
+    import math as _math
+
+    mesh = Mesh()
+    mesh.grid_step = grid_size_mm
+    node_net_map: Dict[int, str] = {}
+
+    if not geometry:
+        return mesh, node_net_map, (0, 0), []
+
+    min_x = min_y = float('inf')
+    max_x = max_y = float('-inf')
+    for (net, layer), poly in geometry.items():
+        b = poly.bounds
+        min_x = min(min_x, b[0])
+        min_y = min(min_y, b[1])
+        max_x = max(max_x, b[2])
+        max_y = max(max_y, b[3])
+
+    pad = grid_size_mm
+    min_x -= pad
+    min_y -= pad
+    max_x += pad
+    max_y += pad
+    grid_origin = (min_x, min_y)
+    mesh.grid_origin = grid_origin
+
+    nx = int(_math.ceil((max_x - min_x) / grid_size_mm))
+    ny = int(_math.ceil((max_y - min_y) / grid_size_mm))
+    x_coords = np.linspace(min_x, min_x + nx * grid_size_mm, nx + 1)
+    y_coords = np.linspace(min_y, min_y + ny * grid_size_mm, ny + 1)
+    xv, yv = np.meshgrid(x_coords, y_coords)
+    grid_points = np.column_stack((xv.ravel(), yv.ravel()))
+
+    all_layers = sorted(set(layer for (net, layer) in geometry.keys()))
+    all_nets = sorted(set(net for (net, layer) in geometry.keys()))
+
+    g_lat = COPPER_THICKNESS / COPPER_RESISTIVITY
+
+    node_counter = 0
+
+    for net in all_nets:
+        net_layers = sorted(layer for (n, layer) in geometry.keys() if n == net)
+        for layer_id in net_layers:
+            poly = geometry.get((net, layer_id))
+            if poly is None or poly.is_empty:
+                continue
+
+            polys_to_check = [poly] if poly.geom_type == 'Polygon' else list(poly.geoms)
+            layer_mask = np.zeros(len(grid_points), dtype=bool)
+
+            for p in polys_to_check:
+                pb = p.buffer(1e-5)
+                if pb.is_empty:
+                    continue
+                codes = []
+                verts = []
+                ext_coords = list(pb.exterior.coords)
+                verts.extend(ext_coords)
+                codes.append(matplotlib.path.Path.MOVETO)
+                codes.extend([matplotlib.path.Path.LINETO] * (len(ext_coords) - 2))
+                codes.append(matplotlib.path.Path.CLOSEPOLY)
+                for interior in pb.interiors:
+                    int_coords = list(interior.coords)
+                    verts.extend(int_coords)
+                    codes.append(matplotlib.path.Path.MOVETO)
+                    codes.extend([matplotlib.path.Path.LINETO] * (len(int_coords) - 2))
+                    codes.append(matplotlib.path.Path.CLOSEPOLY)
+                path = matplotlib.path.Path(verts, codes)
+                mask = path.contains_points(grid_points, radius=1e-9)
+                layer_mask |= mask
+
+            mask_2d = layer_mask.reshape((ny + 1, nx + 1))
+            count_on_layer = np.count_nonzero(mask_2d)
+            if count_on_layer == 0:
+                continue
+
+            y_idxs, x_idxs = np.nonzero(mask_2d)
+            new_ids = np.arange(node_counter, node_counter + count_on_layer)
+            mesh.nodes.extend(new_ids.tolist())
+
+            for i in range(count_on_layer):
+                nid = int(new_ids[i])
+                xi = int(x_idxs[i])
+                yi = int(y_idxs[i])
+                mesh.node_map[(xi, yi, layer_id, net)] = nid
+                mesh.node_coords[nid] = (
+                    float(min_x + xi * grid_size_mm),
+                    float(min_y + yi * grid_size_mm),
+                    layer_id,
+                )
+                node_net_map[nid] = net
+
+            node_counter += count_on_layer
+
+            # node_grid for vectorized neighbor lookup
+            node_grid = np.full((ny + 1, nx + 1), -1, dtype=np.int64)
+            node_grid[y_idxs, x_idxs] = new_ids
+
+            right_mask = mask_2d[:, :-1] & mask_2d[:, 1:]
+            if np.any(right_mask):
+                yr, xr = np.nonzero(right_mask)
+                u_ids = node_grid[yr, xr]
+                v_ids = node_grid[yr, xr + 1]
+                for u, v in zip(u_ids, v_ids):
+                    mesh.add_edge_direct(int(u), int(v), g_lat)
+
+            top_mask = mask_2d[:-1, :] & mask_2d[1:, :]
+            if np.any(top_mask):
+                yt, xt = np.nonzero(top_mask)
+                u_ids = node_grid[yt, xt]
+                v_ids = node_grid[yt + 1, xt]
+                for u, v in zip(u_ids, v_ids):
+                    mesh.add_edge_direct(int(u), int(v), g_lat)
+
+            print(f"[FEM] net={net} layer={layer_id}: {count_on_layer} grid nodes")
+
+    print(f"[FEM] Rasterization done: {node_counter} total nodes, grid {nx+1}x{ny+1}")
+    return mesh, node_net_map, grid_origin, all_layers
+
+
+def _add_vias(mesh, data, active_nets, all_layers, grid_size_mm, grid_origin):
+    """Add vertical via/PTH connections between layers."""
+    import math as _math
+
+    if len(all_layers) < 2:
+        return
+
+    for node in data.nodes:
+        if node.net not in active_nets:
+            continue
+        is_via = node.type == 'via'
+        is_pth = node.type == 'pad' and (node.layer is None or node.layer <= 0)
+        if not is_via and not is_pth:
             continue
 
-        minx, miny, maxx, maxy = poly.bounds
-        xs = np.arange(minx + res_mil * 0.5, maxx, res_mil)
-        ys = np.arange(miny + res_mil * 0.5, maxy, res_mil)
+        x_mm = node.x * MIL_TO_MM
+        y_mm = node.y * MIL_TO_MM
+        dia_mm = (node.width or 20) * MIL_TO_MM
 
-        # 收集多边形内的网格点，用 (ix, iy) 索引快速查找相邻节点
-        grid: Dict[tuple, int] = {}  # (ix, iy) → node_id
-        for ix, x in enumerate(xs):
-            for iy, y in enumerate(ys):
-                if poly.contains(Point(x, y)):
-                    nid = next_node_id
-                    next_node_id += 1
-                    m.nodes.append(nid)
-                    m.node_coords[nid] = (float(x), float(y), pour.layer)
-                    node_net[nid] = pour.net
-                    grid[(ix, iy)] = nid
+        nodes_in_stack = []
+        for layer_id in all_layers:
+            nid = _snap_to_grid(mesh, x_mm, y_mm, layer_id, node.net, grid_size_mm, grid_origin)
+            if nid is not None:
+                nodes_in_stack.append((layer_id, nid))
 
-        if not grid:
+        for i in range(len(nodes_in_stack) - 1):
+            la, nid_a = nodes_in_stack[i]
+            lb, nid_b = nodes_in_stack[i + 1]
+            area = _math.pi * (dia_mm * VIA_PLATING_THICKNESS - VIA_PLATING_THICKNESS ** 2)
+            if area <= 0:
+                area = 1e-6
+            g_via = area / (COPPER_RESISTIVITY * SUBSTRATE_HEIGHT)
+            mesh.add_edge_direct(nid_a, nid_b, g_via)
+
+    # Also connect junction nodes that bridge layers (track layer transitions)
+    from collections import defaultdict
+    junction_by_coord: Dict[tuple, list] = defaultdict(list)
+    for node in data.nodes:
+        if node.net not in active_nets or node.type != 'junction':
             continue
+        if node.layer is None or node.layer <= 0:
+            continue
+        x_mm = node.x * MIL_TO_MM
+        y_mm = node.y * MIL_TO_MM
+        key = (node.net, round(x_mm, 4), round(y_mm, 4))
+        junction_by_coord[key].append((node.layer, x_mm, y_mm))
 
-        # 连接相邻网格节点（横向 + 纵向）
-        # 铺铜方块电阻 R_cell = R_sheet（正方形，L/W=1），但坐标单位是 mil
-        # 实际步长 res_mil mil = res_mm mm，电阻 = R_sheet * (res_mm/res_mm) = R_sheet
-        for (ix, iy), nid in grid.items():
-            right = grid.get((ix + 1, iy))
-            if right is not None:
-                m.add_edge_direct(nid, right, G_CELL)
-            up = grid.get((ix, iy + 1))
-            if up is not None:
-                m.add_edge_direct(nid, up, G_CELL)
-
-        pour_node_ids = list(grid.values())
-        total_pour_nodes += len(pour_node_ids)
-
-        # 将铺铜网格节点连接到同层同网络的走线 junction 节点
-        # 无距离阈值：同网络的 junction 必然与铺铜电气相连，连接最近的网格节点
-        layer_juncs = net_layer_junctions.get(pour.net, {}).get(pour.layer, [])
-        for junc in layer_juncs:
-            jx, jy = junc.x, junc.y
-            best_nid = min(pour_node_ids, key=lambda nid: (m.node_coords[nid][0]-jx)**2 + (m.node_coords[nid][1]-jy)**2)
-            junc_idx = str_to_int.get(junc.id)
-            if junc_idx is not None:
-                m.add_edge_direct(best_nid, junc_idx, G_PAD)
-
-        # 将同网络的 pad/via 节点连接到本铺铜最近的网格节点
-        # 不做层过滤：pad 可能在不同层但电气上连接到铺铜（如通孔焊盘）
-        for node in unique_nodes:
-            if node.net != pour.net or node.type not in ('pad', 'via'):
-                continue
-            node_idx = str_to_int.get(node.id)
-            if node_idx is None:
-                continue
-            best_nid = min(pour_node_ids, key=lambda nid: (m.node_coords[nid][0]-node.x)**2 + (m.node_coords[nid][1]-node.y)**2)
-            m.add_edge_direct(node_idx, best_nid, G_PAD)
-
-    print(f"[KiPIDA] 铺铜网格化完成: {len(data.copper_pours)} 个铺铜, {total_pour_nodes} 个网格节点")
-    return next_node_id
+    for key, layer_entries in junction_by_coord.items():
+        if len(layer_entries) < 2:
+            continue
+        net = key[0]
+        layer_entries.sort()
+        nids = []
+        for layer_id, x_mm, y_mm in layer_entries:
+            nid = _snap_to_grid(mesh, x_mm, y_mm, layer_id, net, grid_size_mm, grid_origin)
+            if nid is not None:
+                nids.append((layer_id, nid))
+        for i in range(len(nids) - 1):
+            la, nid_a = nids[i]
+            lb, nid_b = nids[i + 1]
+            g_via = 1e4
+            mesh.add_edge_direct(nid_a, nid_b, g_via)
 
 
 def _log_input_summary(data: 'KipidaInput') -> None:
@@ -343,185 +546,105 @@ def _log_input_summary(data: 'KipidaInput') -> None:
 
 def build_mesh_and_solve(data: KipidaInput) -> Dict[str, float]:
     """
-    将 EasyEDA 数据转换为 KiPIDA Mesh，调用真实 Solver 求解。
-    只处理有电压源的 net，避免孤立子图导致矩阵奇异。
-    返回 { node_id_str: voltage } 映射。
+    FEM grid mesh approach: build Shapely geometry from EasyEDA data,
+    rasterize onto a regular grid, solve with KiPIDA Solver.
+    Returns (voltages_by_str_id, mesh_points_for_plotting).
     """
     from mesh import Mesh
     from solver import Solver
+    import numpy as np
+    import scipy.sparse
+    from scipy.sparse.csgraph import connected_components
+    import math as _math
 
     _log_input_summary(data)
 
-    # 1. 找出有 Source 的 net
+    # 1. Active nets
     source_node_ids = {s.node_id for s in data.sources}
     load_node_ids = {l.node_id for l in data.loads}
     active_node_ids = source_node_ids | load_node_ids
-
-    # 找 source/load 节点所属的 net
     active_nets: set = set()
     for node in data.nodes:
         if node.id in active_node_ids:
             active_nets.add(node.net)
-
     if not active_nets:
         raise ValueError("没有有效的电压源节点，无法求解")
 
-    # 2. 只保留活跃 net 的节点（去重）
-    seen = {}
-    unique_nodes = []
-    for node in data.nodes:
-        if node.net not in active_nets:
-            continue
-        if node.id not in seen:
-            seen[node.id] = len(unique_nodes)
-            unique_nodes.append(node)
-    str_to_int: Dict[str, int] = seen
+    node_by_id = {n.id: n for n in data.nodes}
 
-    # 坐标去重：pad/via 可能因两次扫描产生不同 ID 但相同坐标的重复节点
-    coord_seen: set = set()
-    deduped: list = []
-    new_str_to_int: Dict[str, int] = {}
-    for node in unique_nodes:
-        if node.type in ('pad', 'via'):
-            key = f"{node.net}|{node.x:.1f}|{node.y:.1f}|{node.type}"
-            if key in coord_seen:
-                continue
-            coord_seen.add(key)
-        new_str_to_int[node.id] = len(deduped)
-        deduped.append(node)
-    unique_nodes = deduped
-    str_to_int = new_str_to_int
+    # 2. Build geometry & rasterize
+    geometry = _build_geometry(data, active_nets)
+    if not geometry:
+        raise ValueError("无法从输入数据构建铜皮几何")
 
-    # 3. 构建 Mesh，node_coords 统一存 (x, y, layer)
-    # 额外维护 node_net dict 记录每个节点所属 net（含插值节点）
-    m = Mesh()
-    node_net: Dict[int, str] = {}
-    m.nodes = list(range(len(unique_nodes)))
-    for node in unique_nodes:
-        idx = str_to_int[node.id]
-        m.node_coords[idx] = (node.x, node.y, node.layer if node.layer is not None else -1)
-        node_net[idx] = node.net
+    grid_size_mm = data.mesh_resolution or GRID_SIZE_MM
+    mesh, node_net_map, grid_origin, all_layers = _rasterize(geometry, grid_size_mm)
 
-    # 4. 添加电阻边（按 mesh_resolution 插值，坐标单位 mm）
-    import math as _math
-    res_mm = (data.mesh_resolution or 0.1)
-    next_node_id = len(unique_nodes)
+    if not mesh.nodes:
+        raise ValueError("栅格化后没有网格节点")
 
-    for res in data.resistances:
-        if res.net not in active_nets or res.resistance <= 0:
-            continue
-        u = str_to_int.get(res.start_node)
-        v = str_to_int.get(res.end_node)
-        if u is None or v is None or u == v:
-            continue
+    # 3. Via connections
+    _add_vias(mesh, data, active_nets, all_layers, grid_size_mm, grid_origin)
 
-        ux, uy = m.node_coords[u][0], m.node_coords[u][1]
-        vx, vy = m.node_coords[v][0], m.node_coords[v][1]
-        length_mm = _math.sqrt((vx - ux)**2 + (vy - uy)**2)
-        n_seg = max(1, round(length_mm / res_mm))
-
-        if n_seg <= 1:
-            m.add_edge_direct(u, v, 1.0 / res.resistance)
-        else:
-            seg_g = n_seg / res.resistance  # 每段电导 = 总电导 × 段数
-            layer = res.layer if res.layer is not None else 0
-            prev = u
-            for i in range(1, n_seg):
-                t = i / n_seg
-                nid = next_node_id
-                next_node_id += 1
-                m.nodes.append(nid)
-                m.node_coords[nid] = (ux + t*(vx-ux), uy + t*(vy-uy), layer)
-                node_net[nid] = res.net
-                m.add_edge_direct(prev, nid, seg_g)
-                prev = nid
-            m.add_edge_direct(prev, v, seg_g)
-
-    # 5. 将所有 pad 和 via 节点连接到同 net 最近的 junction 节点
-    # pad: 只连同层最近的 junction
-    # via: 连接每一层上最近的 junction（via 跨层桥接）
-    net_layer_junctions: Dict[str, Dict[int, list]] = {}
-    for node in unique_nodes:
-        if node.type == 'junction':
-            layer = node.layer if node.layer is not None else -1
-            net_layer_junctions.setdefault(node.net, {}).setdefault(layer, []).append(node)
-
-    G_PAD = 1e6
-    for node in unique_nodes:
-        if node.type not in ('pad', 'via'):
-            continue
-        u = str_to_int[node.id]
-        net_layers = net_layer_junctions.get(node.net, {})
-        if not net_layers:
-            continue
-
-        if node.type == 'pad' and node.layer is not None and node.layer != -1:
-            # SMD 焊盘：只连同层最近的 junction
-            candidates = net_layers.get(node.layer, [])
-            if not candidates:
-                candidates = [j for jlist in net_layers.values() for j in jlist]
-            if candidates:
-                best = min(candidates, key=lambda j: (j.x - node.x)**2 + (j.y - node.y)**2)
-                v = str_to_int[best.id]
-                if u != v:
-                    m.add_edge_direct(u, v, G_PAD)
-        else:
-            # PTH 焊盘 (layer=None/-1) 和 via：连每一层上最近的 junction（跨层桥接）
-            for layer_junctions in net_layers.values():
-                if not layer_junctions:
-                    continue
-                best = min(layer_junctions, key=lambda j: (j.x - node.x)**2 + (j.y - node.y)**2)
-                v = str_to_int[best.id]
-                if u != v:
-                    m.add_edge_direct(u, v, G_PAD)
-
-    # 5b. 铺铜网格化与融合
-    next_node_id = mesh_copper_pours(
-        data, m, str_to_int, node_net, next_node_id,
-        active_nets, unique_nodes, net_layer_junctions,
-    )
-
-    # 6. 转换 sources / loads
+    # 4. Snap source/load nodes to nearest grid nodes
     sources = []
+    source_snap = {}
     for s in data.sources:
-        idx = str_to_int.get(s.node_id)
-        if idx is not None:
-            sources.append({"node_id": idx, "voltage": s.voltage})
+        orig = node_by_id.get(s.node_id)
+        if orig is None:
+            continue
+        x_mm = orig.x * MIL_TO_MM
+        y_mm = orig.y * MIL_TO_MM
+        layer = orig.layer if orig.layer and orig.layer > 0 else None
+        if layer is not None:
+            nid = _snap_to_grid(mesh, x_mm, y_mm, layer, orig.net, grid_size_mm, grid_origin)
+        else:
+            nid = _snap_to_grid_any_layer(mesh, x_mm, y_mm, all_layers, orig.net, grid_size_mm, grid_origin)
+        if nid is not None:
+            sources.append({"node_id": nid, "voltage": s.voltage})
+            source_snap[s.node_id] = nid
+            print(f"[FEM] Source {s.node_id} -> grid node {nid}")
 
     loads = []
+    load_snap = {}
     for l in data.loads:
-        idx = str_to_int.get(l.node_id)
-        if idx is not None:
-            loads.append({"node_id": idx, "current": l.current})
+        orig = node_by_id.get(l.node_id)
+        if orig is None:
+            continue
+        x_mm = orig.x * MIL_TO_MM
+        y_mm = orig.y * MIL_TO_MM
+        layer = orig.layer if orig.layer and orig.layer > 0 else None
+        if layer is not None:
+            nid = _snap_to_grid(mesh, x_mm, y_mm, layer, orig.net, grid_size_mm, grid_origin)
+        else:
+            nid = _snap_to_grid_any_layer(mesh, x_mm, y_mm, all_layers, orig.net, grid_size_mm, grid_origin)
+        if nid is not None:
+            loads.append({"node_id": nid, "current": l.current})
+            load_snap[l.node_id] = nid
 
     if not sources:
-        raise ValueError("没有有效的电压源节点，无法求解")
+        raise ValueError("没有有效的电压源节点可以 snap 到网格")
 
-    # 7. 求解前：用连通分量分析，只保留含 Source 的子图
-    import numpy as np
-    import scipy.sparse
-    from scipy.sparse.csgraph import connected_components
+    print(f"[FEM] Snapped: {len(sources)} sources, {len(loads)} loads")
 
-    N = len(m.nodes)  # 插值后节点总数
-    # 从 mesh 的 COO 数据构建邻接矩阵（只需要连通性，用绝对值）
-    if m.G_coo_data:
-        rows = np.array(m.G_coo_row)
-        cols = np.array(m.G_coo_col)
+    # 5. Connected component filtering
+    N = len(mesh.nodes)
+    if mesh.G_coo_data:
+        rows = np.array(mesh.G_coo_row)
+        cols = np.array(mesh.G_coo_col)
         data_arr = np.ones(len(rows))
         adj = scipy.sparse.coo_matrix((data_arr, (rows, cols)), shape=(N, N))
-        adj = (adj + adj.T)  # 确保对称
+        adj = adj + adj.T
         n_comp, labels = connected_components(adj, directed=False)
     else:
         n_comp, labels = 1, np.zeros(N, dtype=int)
 
-    # 找含 Source 的连通分量
     source_comps = set()
     for s in sources:
         source_comps.add(int(labels[s['node_id']]))
 
-    print(f"[KiPIDA] 连通分量: {n_comp} 个, 含Source: {source_comps}")
+    print(f"[FEM] Connected components: {n_comp}, with source: {source_comps}")
 
-    # 过滤：只保留含 Source 的分量的节点
     keep_mask = np.array([labels[i] in source_comps for i in range(N)])
     keep_indices = np.where(keep_mask)[0]
     keep_set = set(keep_indices.tolist())
@@ -529,73 +652,87 @@ def build_mesh_and_solve(data: KipidaInput) -> Dict[str, float]:
     if len(keep_indices) == 0:
         raise ValueError("Source 节点所在连通分量为空")
 
-    # 重新映射索引
-    old_to_new = {old: new for new, old in enumerate(keep_indices)}
+    old_to_new = {int(old): new for new, old in enumerate(keep_indices)}
 
-    # 重建 Mesh（只含有效节点）
     m2 = Mesh()
     m2.nodes = list(range(len(keep_indices)))
     for old_idx in keep_indices:
-        new_idx = old_to_new[old_idx]
-        m2.node_coords[new_idx] = m.node_coords[old_idx]
+        m2.node_coords[old_to_new[int(old_idx)]] = mesh.node_coords[int(old_idx)]
 
-    # 过滤边
-    for r, c, d in zip(m.G_coo_row, m.G_coo_col, m.G_coo_data):
+    for r, c, d in zip(mesh.G_coo_row, mesh.G_coo_col, mesh.G_coo_data):
         if r in keep_set and c in keep_set:
             m2.G_coo_row.append(old_to_new[r])
             m2.G_coo_col.append(old_to_new[c])
             m2.G_coo_data.append(d)
 
-    # 重映射 sources / loads
     sources2 = [{"node_id": old_to_new[s["node_id"]], "voltage": s["voltage"]}
                 for s in sources if s["node_id"] in keep_set]
     loads2 = [{"node_id": old_to_new[l["node_id"]], "current": l["current"]}
               for l in loads if l["node_id"] in keep_set]
 
-    print(f"[KiPIDA] 有效节点: {len(keep_indices)}, sources={len(sources2)}, loads={len(loads2)}")
+    print(f"[FEM] Solving: {len(keep_indices)} nodes, {len(sources2)} sources, {len(loads2)} loads")
 
+    # 6. Solve
     solver = Solver(debug=False)
-    int_voltages2 = solver.solve(m2, sources2, loads2)
+    int_voltages = solver.solve(m2, sources2, loads2)
 
-    # 映射回原始字符串 node_id（只映射原始节点，插值节点不在 int_to_str 里）
-    int_to_str = {v: k for k, v in str_to_int.items()}
-    result = {}
-    for new_idx, voltage in int_voltages2.items():
-        old_idx = keep_indices[new_idx]
-        if old_idx in int_to_str:
-            result[int_to_str[old_idx]] = voltage
+    # 7. Map voltages back to original string node IDs
+    snap_map = {}
+    snap_map.update(source_snap)
+    snap_map.update(load_snap)
 
-    import math as _math
-    valid_count = sum(1 for v in result.values() if _math.isfinite(v))
-    print(f"[KiPIDA] 求解完成: 有效电压={valid_count}/{len(keep_indices)}")
+    for node in data.nodes:
+        if node.net not in active_nets or node.id in snap_map:
+            continue
+        x_mm = node.x * MIL_TO_MM
+        y_mm = node.y * MIL_TO_MM
+        layer = node.layer if node.layer and node.layer > 0 else None
+        if layer is not None:
+            nid = _snap_to_grid(mesh, x_mm, y_mm, layer, node.net, grid_size_mm, grid_origin)
+        else:
+            nid = _snap_to_grid_any_layer(mesh, x_mm, y_mm, all_layers, node.net, grid_size_mm, grid_origin)
+        if nid is not None:
+            snap_map[node.id] = nid
 
-    # 收集所有节点（含插值节点）的坐标+电压，用于绘图
-    # tuple: (x_mil, y_mil, layer, net, voltage, node_type)
+    voltages = {}
+    for str_id, grid_nid in snap_map.items():
+        if grid_nid not in keep_set:
+            continue
+        new_idx = old_to_new[grid_nid]
+        v = int_voltages.get(new_idx)
+        if v is not None and _math.isfinite(v):
+            voltages[str_id] = v
+
+    valid_count = len(voltages)
+    print(f"[FEM] Solved: {valid_count} original nodes mapped, {len(int_voltages)} total grid voltages")
+
+    # 8. Build mesh_points for plotting (coordinates in mil)
     mesh_points = []
-    nan_count = 0
-    pad_valid = 0
-    pad_nan = 0
-    for new_idx, voltage in int_voltages2.items():
-        old_idx = keep_indices[new_idx]
-        coords = m.node_coords.get(old_idx)
+    for new_idx, voltage in int_voltages.items():
+        if not _math.isfinite(voltage):
+            continue
+        old_idx = int(keep_indices[new_idx])
+        coords = mesh.node_coords.get(old_idx)
         if coords is None:
             continue
-        x_mil, y_mil, layer = coords
-        net = node_net.get(old_idx, '')
-        is_pad = old_idx < len(unique_nodes) and unique_nodes[old_idx].type == 'pad'
-        is_via = old_idx < len(unique_nodes) and unique_nodes[old_idx].type == 'via'
-        node_type = 'pad' if is_pad else ('via' if is_via else 'junction')
-        node_w = (unique_nodes[old_idx].width or 0.0) if old_idx < len(unique_nodes) else 0.0
-        node_h = (unique_nodes[old_idx].height or 0.0) if old_idx < len(unique_nodes) else 0.0
-        if not _math.isfinite(voltage):
-            nan_count += 1
-            if is_pad: pad_nan += 1
+        x_mm, y_mm, layer = coords
+        x_mil = x_mm / MIL_TO_MM
+        y_mil = y_mm / MIL_TO_MM
+        net = node_net_map.get(old_idx, '')
+        if not net:
             continue
-        if net:
-            mesh_points.append((x_mil, y_mil, layer, net, voltage, node_type, node_w, node_h))
-            if is_pad: pad_valid += 1
+        mesh_points.append((x_mil, y_mil, layer, net, voltage, 'junction', 0.0, 0.0))
 
-    return result, mesh_points
+    for node in data.nodes:
+        if node.id not in voltages or node.type not in ('pad', 'via'):
+            continue
+        v = voltages[node.id]
+        w = node.width or 0.0
+        h = node.height or 0.0
+        layer = node.layer if node.layer and node.layer > 0 else (all_layers[0] if all_layers else 1)
+        mesh_points.append((node.x, node.y, layer, node.net, v, node.type, w, h))
+
+    return voltages, mesh_points
 
 
 def generate_plot_images(mesh_points: list, mesh_resolution: float = 0.5, all_layers: list = None, net_results: list = None, max_drop_pct: float = 5.0, resistances=None, node_voltages=None, nodes=None) -> Dict[str, 'NetPlotImages']:
