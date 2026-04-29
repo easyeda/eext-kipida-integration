@@ -149,23 +149,108 @@ export class PcbExtractor {
       console.warn('[PcbExtractor] 提取 PrimitiveFill 失败:', e);
     }
 
-    // 覆铜边框（PrimitivePour）
+    // 覆铜填充区域（PrimitivePoured.getState_PourFills）
+    // Step 1: 从 PrimitivePour 建立 primitiveId → {net, layer} 映射
+    const pourInfoMap = new Map<string, { net: string; layer: number }>();
     try {
       const pours = await eda.pcb_PrimitivePour.getAll();
-      const beforeCount = copperPours.length;
       for (const pour of pours) {
         const net = pour.getState_Net();
-        if (!net || net.trim() === '') continue;
         const layer = pour.getState_Layer() as number;
-        const polygon = pour.getState_ComplexPolygon();
-        const rawVertices = this.parsePolygonVertices(polygon.getSource());
-        if (rawVertices.length >= 3) {
-          copperPours.push({ net, layer, vertices: rawVertices, is_fill: false });
+        const pid = pour.getState_PrimitiveId();
+        if (pid && net) pourInfoMap.set(pid, { net, layer });
+        console.log(`[PcbExtractor] Pour边框: pid=${pid} net=${net} layer=${layer}`);
+      }
+      console.log(`[PcbExtractor] PrimitivePour 映射: ${pourInfoMap.size} 个`);
+    } catch (e) {
+      console.warn('[PcbExtractor] 建立 PrimitivePour 映射失败:', e);
+    }
+
+    // Step 2: 遍历 PrimitivePoured，通过 pourPrimitiveId 关联 net/layer
+    try {
+      const poureds = await eda.pcb_PrimitivePoured.getAll();
+      const beforeCount = copperPours.length;
+      for (const poured of poureds) {
+        const pourPid = poured.getState_PourPrimitiveId();
+        const pouredPid = poured.getState_PrimitiveId();
+        const info = pourInfoMap.get(pourPid);
+        if (!info) {
+          console.warn(`[PcbExtractor] Poured pid=${pouredPid} 的 pourPid=${pourPid} 未找到对应 Pour`);
+          continue;
+        }
+        if (!info.net || info.net.trim() === '') continue;
+        const { net, layer } = info;
+        try {
+          const pourFills = poured.getState_PourFills();
+          if (!pourFills || !Array.isArray(pourFills)) {
+            console.warn(`[PcbExtractor] PourFills 非数组: net=${net} layer=${layer}`, typeof pourFills);
+            continue;
+          }
+          console.log(`[PcbExtractor] Poured: net=${net} layer=${layer} pourFills.length=${pourFills.length}`);
+          if (pourFills.length === 0) {
+            // Fallback: pourFills 为空，使用 Pour 边框作为填充区域
+            const pourObj = await eda.pcb_PrimitivePour.get(pourPid);
+            if (pourObj) {
+              const polygon = pourObj.getState_ComplexPolygon();
+              const parsed = this.parsePolygonVertices(polygon.getSource());
+              const fallbackVertices = parsed.map(v => ({ x: v.x * 10, y: v.y * 10 }));
+              if (fallbackVertices.length >= 3) {
+                copperPours.push({ net, layer, vertices: fallbackVertices, is_fill: false });
+                const xs = fallbackVertices.map(v => v.x);
+                const ys = fallbackVertices.map(v => v.y);
+                console.log(`[PcbExtractor] PourFill(fallback边框): net=${net} layer=${layer} pts=${fallbackVertices.length} x=[${Math.min(...xs).toFixed(2)},${Math.max(...xs).toFixed(2)}] y=[${Math.min(...ys).toFixed(2)},${Math.max(...ys).toFixed(2)}]`);
+              }
+            }
+            continue;
+          }
+          for (let fi = 0; fi < pourFills.length; fi++) {
+            const fill = pourFills[fi];
+            // fill.fill=false 且 lineWidth>0 是热焊盘连接线，不是铜皮，跳过
+            if (fill && fill.fill === false) continue;
+            let parsed: Array<{ x: number; y: number }> = [];
+            if (fill && fill.path) {
+              let src = fill.path.getSource();
+              // 递归展开：如果 src 是数组且第一个元素也是数组，则取内层
+              if (Array.isArray(src)) {
+                while (src.length === 1 && Array.isArray(src[0])) {
+                  src = src[0];
+                }
+                // 如果仍然是嵌套数组（多个子路径），逐个解析并合并
+                if (src.length > 0 && Array.isArray(src[0])) {
+                  for (const sub of src) {
+                    if (Array.isArray(sub)) {
+                      parsed.push(...this.parsePolygonVertices(sub));
+                    }
+                  }
+                } else {
+                  parsed = this.parsePolygonVertices(src);
+                }
+              }
+              if (parsed.length < 3) {
+                const srcRaw = fill.path.getSource();
+                const isNested = Array.isArray(srcRaw) && srcRaw.length > 0 && Array.isArray(srcRaw[0]);
+                const innerLen = isNested ? (srcRaw[0] as any[]).length : 0;
+                console.warn(`[PcbExtractor] PourFill解析不足(v3): net=${net} layer=${layer} fill#${fi} pts=${parsed.length} nested=${isNested} innerLen=${innerLen} srcType=${typeof srcRaw} srcIsArr=${Array.isArray(srcRaw)} src=${JSON.stringify(srcRaw).substring(0, 500)}`);
+              }
+            } else {
+              parsed = this.parsePourFillVertices(fill);
+            }
+            // PourFill 坐标为 mil 的 1/10，需要 ×10 转为 mil
+            const rawVertices = parsed.map(v => ({ x: v.x * 10, y: v.y * 10 }));
+            if (rawVertices.length >= 3) {
+              copperPours.push({ net, layer, vertices: rawVertices, is_fill: false });
+              const xs = rawVertices.map(v => v.x);
+              const ys = rawVertices.map(v => v.y);
+              console.log(`[PcbExtractor] PourFill: net=${net} layer=${layer} fill#${fi} pts=${rawVertices.length} x=[${Math.min(...xs).toFixed(2)},${Math.max(...xs).toFixed(2)}] y=[${Math.min(...ys).toFixed(2)},${Math.max(...ys).toFixed(2)}]`);
+            }
+          }
+        } catch (e) {
+          console.warn(`[PcbExtractor] getState_PourFills 失败: net=${net} layer=${layer}`, e);
         }
       }
-      console.log(`[PcbExtractor] PrimitivePour: ${pours.length} 个覆铜, 新增铺铜区域: ${copperPours.length - beforeCount} 个`);
+      console.log(`[PcbExtractor] PrimitivePoured: ${poureds.length} 个覆铜, 新增填充区域: ${copperPours.length - beforeCount} 个`);
     } catch (e) {
-      console.warn('[PcbExtractor] 提取 PrimitivePour 失败:', e);
+      console.warn('[PcbExtractor] 提取 PrimitivePoured 失败:', e);
     }
 
     console.log(`[PcbExtractor] 提取完成: tracks=${tracks.length}, vias=${vias.length}, pads=${pads.length}, copperPours=${copperPours.length}`);
@@ -231,6 +316,50 @@ export class PcbExtractor {
       } else {
         i += 1;
       }
+    }
+
+    return vertices;
+  }
+
+  private parsePourFillVertices(fill: any): Array<{ x: number; y: number }> {
+    if (!fill) return [];
+    const vertices: Array<{ x: number; y: number }> = [];
+
+    // Case 1: fill is an array of {x, y} objects
+    if (Array.isArray(fill)) {
+      for (const item of fill) {
+        if (item && typeof item.x === 'number' && typeof item.y === 'number') {
+          vertices.push({ x: item.x, y: item.y });
+        } else if (Array.isArray(item) && item.length >= 2 && typeof item[0] === 'number') {
+          // Case 2: array of [x, y] tuples
+          vertices.push({ x: item[0], y: item[1] });
+        }
+      }
+      // Case 3: flat number array [x1, y1, x2, y2, ...]
+      if (vertices.length === 0 && fill.length >= 4 && typeof fill[0] === 'number') {
+        for (let i = 0; i + 1 < fill.length; i += 2) {
+          if (typeof fill[i] === 'number' && typeof fill[i + 1] === 'number') {
+            vertices.push({ x: fill[i], y: fill[i + 1] });
+          }
+        }
+      }
+      // Case 4: SVG-like path tokens (reuse existing parser)
+      if (vertices.length === 0) {
+        return this.parsePolygonVertices(fill);
+      }
+    }
+
+    // Case 5: fill has a getSource() or points property
+    if (vertices.length === 0 && fill.getSource) {
+      return this.parsePolygonVertices(fill.getSource());
+    }
+    if (vertices.length === 0 && fill.points) {
+      return this.parsePourFillVertices(fill.points);
+    }
+
+    // Log first unknown format for debugging
+    if (vertices.length === 0) {
+      console.warn('[PcbExtractor] Unknown PourFill format:', JSON.stringify(fill).substring(0, 200));
     }
 
     return vertices;
