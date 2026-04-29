@@ -302,9 +302,28 @@ def _build_geometry(data, active_nets):
         if layer is not None:
             _add(node.net, layer, pad_poly)
         else:
+            # PTH pad: add to all layers that have geometry for this net
             for key in list(geom_lists.keys()):
                 if key[0] == node.net:
                     _add(node.net, key[1], pad_poly)
+
+    # Vias: circular copper on all layers
+    from shapely.geometry import Point
+    for node in data.nodes:
+        if node.net not in active_nets or node.type != 'via':
+            continue
+        cx, cy = node.x * MIL_TO_MM, node.y * MIL_TO_MM
+        dia_mm = (node.width or 20) * MIL_TO_MM
+        via_circle = Point(cx, cy).buffer(dia_mm / 2)
+        # Add via copper to all layers that have geometry for this net
+        added = False
+        for key in list(geom_lists.keys()):
+            if key[0] == node.net:
+                _add(node.net, key[1], via_circle)
+                added = True
+        if not added:
+            # No geometry yet for this net, add to a default layer
+            _add(node.net, 1, via_circle)
 
     result = {}
     for key, polys in geom_lists.items():

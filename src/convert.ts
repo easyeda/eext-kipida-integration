@@ -16,7 +16,7 @@ import {
 
 export class PcbDataConverter {
   // 铜的电阻率 (Ω·mm)
-  private readonly COPPER_RESISTIVITY = 1.72e-5;
+  private readonly COPPER_RESISTIVITY = 1.68e-5;
   // 外层铜厚 1oz = 0.035mm，内层铜厚默认也取 0.035mm
   private readonly OUTER_THICKNESS = 0.035;
   private readonly INNER_THICKNESS = 0.035;
