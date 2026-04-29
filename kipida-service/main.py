@@ -289,6 +289,15 @@ def _build_geometry(data, active_nets):
         except Exception:
             pass
 
+    # Collect all signal layers from resistances and copper pours
+    all_signal_layers = set()
+    for res in data.resistances:
+        if res.layer is not None and res.layer > 0:
+            all_signal_layers.add(res.layer)
+    for cp in data.copper_pours:
+        if cp.layer is not None and cp.layer > 0:
+            all_signal_layers.add(cp.layer)
+
     for node in data.nodes:
         if node.net not in active_nets or node.type != 'pad':
             continue
@@ -302,12 +311,11 @@ def _build_geometry(data, active_nets):
         if layer is not None:
             _add(node.net, layer, pad_poly)
         else:
-            # PTH pad: add to all layers that have geometry for this net
-            for key in list(geom_lists.keys()):
-                if key[0] == node.net:
-                    _add(node.net, key[1], pad_poly)
+            # PTH pad: add to ALL signal layers (not just layers with existing geometry)
+            for lid in all_signal_layers:
+                _add(node.net, lid, pad_poly)
 
-    # Vias: circular copper on all layers
+    # Vias: circular copper on all signal layers
     from shapely.geometry import Point
     for node in data.nodes:
         if node.net not in active_nets or node.type != 'via':
@@ -315,15 +323,8 @@ def _build_geometry(data, active_nets):
         cx, cy = node.x * MIL_TO_MM, node.y * MIL_TO_MM
         dia_mm = (node.width or 20) * MIL_TO_MM
         via_circle = Point(cx, cy).buffer(dia_mm / 2)
-        # Add via copper to all layers that have geometry for this net
-        added = False
-        for key in list(geom_lists.keys()):
-            if key[0] == node.net:
-                _add(node.net, key[1], via_circle)
-                added = True
-        if not added:
-            # No geometry yet for this net, add to a default layer
-            _add(node.net, 1, via_circle)
+        for lid in all_signal_layers:
+            _add(node.net, lid, via_circle)
 
     result = {}
     for key, polys in geom_lists.items():
