@@ -130,8 +130,8 @@ export class PcbExtractor {
     const copperPours: EasyEDA_CopperPour[] = [];
 
     // 静态填充
-    // getState_ComplexPolygon().getSource() 返回 canvas 坐标 (mil)，与走线/焊盘一致
-    // 但 Y 轴方向相反（数学坐标系 Y-up vs 屏幕坐标系 Y-down），需要取反
+    // getState_ComplexPolygon().getSource() 返回 EasyEDA 内部坐标
+    // 不做任何转换，由 main.py 自动检测单位并修正
     try {
       const fills = await eda.pcb_PrimitiveFill.getAll();
       for (const fill of fills) {
@@ -140,9 +140,8 @@ export class PcbExtractor {
         const layer = fill.getState_Layer() as number;
         const polygon = fill.getState_ComplexPolygon();
         const rawVertices = this.parsePolygonVertices(polygon.getSource());
-        const vertices = rawVertices.map(v => ({ x: v.x, y: -v.y }));
-        if (vertices.length >= 3) {
-          copperPours.push({ net, layer, vertices, is_fill: true });
+        if (rawVertices.length >= 3) {
+          copperPours.push({ net, layer, vertices: rawVertices, is_fill: true });
         }
       }
       console.log(`[PcbExtractor] PrimitiveFill: ${fills.length} 个, 有效: ${copperPours.length} 个`);
@@ -160,9 +159,8 @@ export class PcbExtractor {
         const layer = pour.getState_Layer() as number;
         const polygon = pour.getState_ComplexPolygon();
         const rawVertices = this.parsePolygonVertices(polygon.getSource());
-        const vertices = rawVertices.map(v => ({ x: v.x, y: -v.y }));
-        if (vertices.length >= 3) {
-          copperPours.push({ net, layer, vertices, is_fill: false });
+        if (rawVertices.length >= 3) {
+          copperPours.push({ net, layer, vertices: rawVertices, is_fill: false });
         }
       }
       console.log(`[PcbExtractor] PrimitivePour: ${pours.length} 个覆铜, 新增铺铜区域: ${copperPours.length - beforeCount} 个`);

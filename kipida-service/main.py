@@ -201,6 +201,8 @@ def _build_geometry(data, active_nets):
     """
     from shapely.geometry import Polygon, LineString, box
     from shapely.ops import unary_union
+    from shapely import affinity
+    from collections import defaultdict
 
     node_by_id = {n.id: n for n in data.nodes}
     geom_lists: Dict[tuple, list] = {}
@@ -209,14 +211,61 @@ def _build_geometry(data, active_nets):
         if poly is not None and not poly.is_empty:
             geom_lists.setdefault((net, layer), []).append(poly)
 
+    # Compute per-net node bounding box (mm) for pour offset correction
+    net_bounds: Dict[str, list] = defaultdict(lambda: [float('inf'), float('inf'), float('-inf'), float('-inf')])
+    for node in data.nodes:
+        if node.net not in active_nets:
+            continue
+        x_mm = node.x * MIL_TO_MM
+        y_mm = node.y * MIL_TO_MM
+        b = net_bounds[node.net]
+        b[0] = min(b[0], x_mm)
+        b[1] = min(b[1], y_mm)
+        b[2] = max(b[2], x_mm)
+        b[3] = max(b[3], y_mm)
+
     for pour in data.copper_pours:
         if pour.net not in active_nets or len(pour.vertices) < 3:
             continue
-        coords = [(v['x'] * MIL_TO_MM, v['y'] * MIL_TO_MM) for v in pour.vertices]
+
+        nb = net_bounds.get(pour.net)
+        node_box = None
+        if nb and nb[0] != float('inf'):
+            node_box = box(nb[0] - 2, nb[1] - 2, nb[2] + 2, nb[3] + 2)
+
+        # Pour coords are in mil (same as pads). Convert to mm.
+        coords_mm = [(v['x'] * MIL_TO_MM, v['y'] * MIL_TO_MM) for v in pour.vertices]
         try:
-            poly = Polygon(coords)
+            poly = Polygon(coords_mm)
             if not poly.is_valid:
                 poly = poly.buffer(0)
+            if poly.is_empty:
+                continue
+
+            if node_box is not None and poly.area > 0:
+                overlap = poly.intersection(node_box).area / poly.area
+
+                # If low overlap, try Y-flip
+                if overlap < 0.3:
+                    coords_yflip = [(v['x'] * MIL_TO_MM, -v['y'] * MIL_TO_MM) for v in pour.vertices]
+                    poly_yf = Polygon(coords_yflip)
+                    if not poly_yf.is_valid:
+                        poly_yf = poly_yf.buffer(0)
+                    overlap_yf = poly_yf.intersection(node_box).area / poly_yf.area if poly_yf.area > 0 else 0
+                    if overlap_yf > overlap:
+                        poly = poly_yf
+                        overlap = overlap_yf
+                        print(f"[FEM] Pour Y-flipped: net={pour.net} layer={pour.layer} (overlap={overlap:.0%})")
+
+                # If still low overlap, translate to align with node center
+                if overlap < 0.3:
+                    pb = poly.bounds
+                    dx = (nb[0] + nb[2]) / 2 - (pb[0] + pb[2]) / 2
+                    dy = (nb[1] + nb[3]) / 2 - (pb[1] + pb[3]) / 2
+                    poly = affinity.translate(poly, xoff=dx, yoff=dy)
+                    new_overlap = poly.intersection(node_box).area / poly.area if poly.area > 0 else 0
+                    print(f"[FEM] Pour translated: net={pour.net} layer={pour.layer} dy={dy:.2f}mm (overlap={new_overlap:.0%})")
+
             _add(pour.net, pour.layer, poly)
         except Exception as e:
             print(f"[FEM] copper pour polygon failed net={pour.net}: {e}")
@@ -1028,6 +1077,11 @@ async def analyze_pcb(data: KipidaInput):
     try:
         analysis_state["total_requests"] += 1
         analysis_state["last_input"] = data.model_dump()
+
+        import json as _json
+        input_path = os.path.join(os.path.dirname(__file__), 'last_input.json')
+        with open(input_path, 'w', encoding='utf-8') as f:
+            _json.dump(data.model_dump(), f, ensure_ascii=False, indent=2)
 
         if not data.nodes:
             return AnalysisOutput(success=False, message="没有找到有效节点")
