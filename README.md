@@ -58,23 +58,21 @@ git clone https://github.com/easyeda/eext-kipida-integration.git
 
 仅需其中的 `kipida-service/` 目录。
 
-### 2. 安装 Python 依赖
+### 2. 启动 Python 服务
+
+双击 `kipida-service/start.bat`，脚本会自动安装依赖并启动服务。
+
+也可以手动启动：
 
 ```bash
 cd kipida-service
 pip install -r requirements.txt
-```
-
-### 3. 启动 Python 服务
-
-```bash
-cd kipida-service
 python -m uvicorn main:app --reload --port 5000
 ```
 
 服务启动后访问 http://localhost:5000/docs 可查看 API 文档。
 
-### 4. 安装 EasyEDA 插件
+### 3. 安装 EasyEDA 插件
 
 在嘉立创EDA专业版中：**高级 → 扩展管理器 → 导入扩展**，选择 `build/dist/kipida-bridge_v1.0.0.eext`。
 
