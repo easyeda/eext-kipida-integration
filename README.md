@@ -2,6 +2,8 @@
 
 将 [KiPIDA](https://github.com/kbralten/KiPIDA) PDN IR Drop 分析工具桥接到嘉立创EDA专业版的扩展插件。
 
+**项目地址**: [https://github.com/easyeda/eext-kipida-integration](https://github.com/easyeda/eext-kipida-integration)
+
 ## 功能概述
 
 - 从 EasyEDA 提取 PCB 走线、过孔、焊盘数据
@@ -15,7 +17,7 @@
 
 打开 PCB 文件后，点击菜单 **PDN 分析 → 运行 IR Drop 分析**，弹出配置面板：
 
-![配置界面](配置界面.png)
+![配置界面](images/配置界面.png)
 
 - 左侧自动检测 PCB 中的电源网络，点击选中目标网络
 - 右侧为该网络添加 **SOURCE**（电压源器件）和 **LOAD**（负载器件）
@@ -26,7 +28,7 @@
 
 点击 **Run Simulation** 后，结果窗口自动弹出：
 
-![输出结果](输出结果.png)
+![输出结果](images/输出结果.png)
 
 - 顶部文字摘要：每个 Rail 的电压范围和 IR Drop 值
 - 标签页切换：3D View（全局三维热力图）+ 各铜层 2D 热力图
@@ -37,6 +39,8 @@
 
 ## 安装与配置
 
+> 本插件通过嘉立创EDA扩展商店发布，用户可直接安装 `.eext` 插件文件。但插件运行依赖本地 Python 服务，需要从 [GitHub 仓库](https://github.com/easyeda/eext-kipida-integration) 下载 `kipida-service` 文件夹并配置。
+
 ### 前置依赖
 
 | 依赖 | 说明 |
@@ -45,15 +49,25 @@
 | Python 3.10+ | 运行 kipida-service |
 | KiPIDA 源码 | 提供求解器核心 |
 
-### 1. 安装 KiPIDA
+### 1. 获取 kipida-service
+
+从 GitHub 仓库下载 `kipida-service` 文件夹：
+
+```bash
+git clone https://github.com/easyeda/eext-kipida-integration.git
+```
+
+仅需其中的 `kipida-service/` 目录。
+
+### 2. 安装 KiPIDA
 
 从 [KiPIDA GitHub](https://github.com/kbralten/KiPIDA) 下载源码到本地，例如 `D:\PDN\KiPIDA`。
 
-### 2. 配置 KiPIDA 路径
+### 3. 配置 KiPIDA 路径
 
 打开 `kipida-service/main.py`，修改第 14 行的默认路径：
 
-![配置 KiPIDA 路径](输入KIPIDA源码路径.png)
+![配置 KiPIDA 路径](images/输入KIPIDA源码路径.png)
 
 ```python
 KIPIDA_PATH = os.environ.get("KIPIDA_PATH", r"D:\PDN\KiPIDA")
@@ -65,14 +79,14 @@ KIPIDA_PATH = os.environ.get("KIPIDA_PATH", r"D:\PDN\KiPIDA")
 set KIPIDA_PATH=D:\你的路径\KiPIDA
 ```
 
-### 3. 安装 Python 依赖
+### 4. 安装 Python 依赖
 
 ```bash
 cd kipida-service
 pip install -r requirements.txt
 ```
 
-### 4. 启动 Python 服务
+### 5. 启动 Python 服务
 
 ```bash
 cd kipida-service
@@ -81,9 +95,11 @@ python -m uvicorn main:app --reload --port 5000
 
 服务启动后访问 http://localhost:5000/docs 可查看 API 文档。
 
-### 5. 安装 EasyEDA 插件
+### 6. 安装 EasyEDA 插件
 
 在嘉立创EDA专业版中：**高级 → 扩展管理器 → 导入扩展**，选择 `build/dist/kipida-bridge_v1.0.0.eext`。
+
+也可通过嘉立创EDA扩展商店直接搜索安装。
 
 ---
 
