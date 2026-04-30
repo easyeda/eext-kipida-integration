@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>KiPIDA PDN 分析配置</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; background: #f0f0f0; color: #222; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+
+  /* Main area */
+  .main { display: flex; flex: 1; overflow: hidden; }
+
+  /* Left panel */
+  .left { width: 200px; min-width: 160px; border-right: 1px solid #bbb; display: flex; flex-direction: column; background: #fff; }
+  .left-title { padding: 6px 8px; font-size: 11px; font-weight: 600; color: #555; background: #f5f5f5; border-bottom: 1px solid #ddd; }
+  .net-list { flex: 1; overflow-y: auto; }
+  .net-item { padding: 5px 10px; cursor: pointer; font-size: 12px; border-bottom: 1px solid #f0f0f0; }
+  .net-item:hover { background: #e8f0fe; }
+  .net-item.selected { background: #1a73e8; color: #fff; }
+  .left-footer { padding: 6px; border-top: 1px solid #ddd; }
+  .btn-add-net { width: 100%; padding: 4px; font-size: 11px; background: #f5f5f5; border: 1px solid #ccc; border-radius: 3px; cursor: pointer; }
+  .btn-add-net:hover { background: #e8e8e8; }
+
+  /* Right panel */
+  .right { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: #fff; }
+  .rail-header { padding: 8px 12px; background: #f5f5f5; border-bottom: 1px solid #ddd; display: flex; align-items: center; gap: 12px; }
+  .rail-header label { font-size: 12px; color: #555; }
+  .rail-header input { width: 80px; padding: 3px 6px; border: 1px solid #bbb; border-radius: 3px; font-size: 12px; }
+  .table-wrap { flex: 1; overflow-y: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { background: #f5f5f5; padding: 5px 10px; text-align: left; border-bottom: 2px solid #ddd; font-weight: 600; color: #555; position: sticky; top: 0; }
+  td { padding: 5px 10px; border-bottom: 1px solid #f0f0f0; }
+  tr.selected-row td { background: #e8f0fe; }
+  tr:hover td { background: #f5f5f5; }
+  tr.selected-row:hover td { background: #d2e3fc; }
+  .role-source { color: #c0392b; font-weight: 600; }
+  .role-load { color: #2980b9; font-weight: 600; }
+  .current-cell input { width: 60px; padding: 2px 4px; border: 1px solid #bbb; border-radius: 3px; font-size: 11px; }
+  .table-actions { padding: 6px 10px; border-top: 1px solid #ddd; display: flex; gap: 6px; background: #f9f9f9; }
+  .btn-action { padding: 4px 12px; font-size: 12px; border: 1px solid #bbb; border-radius: 3px; cursor: pointer; background: #fff; }
+  .btn-action:hover { background: #e8e8e8; }
+  .btn-action:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-remove { color: #c0392b; border-color: #e0a0a0; }
+  .btn-remove:hover:not(:disabled) { background: #fdecea; }
+
+  /* Bottom bar */
+  .bottom { padding: 8px 12px; border-top: 1px solid #bbb; background: #f0f0f0; display: flex; align-items: center; gap: 16px; }
+  .bottom label { font-size: 12px; color: #555; }
+  .bottom input[type=number] { width: 60px; padding: 3px 6px; border: 1px solid #bbb; border-radius: 3px; font-size: 12px; }
+  .bottom-right { margin-left: auto; display: flex; gap: 8px; }
+  .btn-main { padding: 5px 16px; font-size: 13px; border-radius: 3px; border: 1px solid #bbb; cursor: pointer; }
+  .btn-run { background: #1a73e8; color: #fff; border-color: #1a73e8; }
+  .btn-run:hover:not(:disabled) { background: #1557b0; }
+  .btn-run:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-close { background: #fff; }
+  .btn-close:hover { background: #e8e8e8; }
+
+  /* Picker overlay */
+  .picker-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.3); z-index: 100; align-items: center; justify-content: center; }
+  .picker-overlay.show { display: flex; }
+  .picker-box { background: #fff; border-radius: 6px; padding: 16px; min-width: 280px; box-shadow: 0 4px 20px rgba(0,0,0,0.2); }
+  .picker-box h3 { font-size: 13px; margin-bottom: 10px; }
+  .picker-box select { width: 100%; padding: 5px; border: 1px solid #bbb; border-radius: 3px; font-size: 12px; margin-bottom: 8px; }
+  .picker-box .current-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 12px; }
+  .picker-box .current-row input { width: 70px; padding: 3px 6px; border: 1px solid #bbb; border-radius: 3px; }
+  .picker-btns { display: flex; gap: 8px; justify-content: flex-end; }
+  .picker-btns button { padding: 4px 14px; font-size: 12px; border: 1px solid #bbb; border-radius: 3px; cursor: pointer; background: #fff; }
+  .picker-btns .btn-ok { background: #1a73e8; color: #fff; border-color: #1a73e8; }
+  .picker-btns .btn-ok:hover { background: #1557b0; }
+
+  .empty-hint { padding: 20px; text-align: center; color: #999; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<div class="main">
+  <!-- Left: net list -->
+  <div class="left">
+    <div class="left-title">Detected Power Rails</div>
+    <div class="net-list" id="net-list"></div>
+    <div class="left-footer">
+      <button class="btn-add-net" onclick="addManualNet()">Add Manual Net</button>
+    </div>
+  </div>
+
+  <!-- Right: rail properties -->
+  <div class="right">
+    <div class="rail-header">
+      <span style="font-weight:600;font-size:13px">Rail Properties</span>
+      <label>Nominal Voltage (V):</label>
+      <input type="number" id="rail-voltage" value="3.3" step="0.1" min="0" onchange="updateVoltage()">
+    </div>
+    <div class="table-wrap">
+      <table id="rail-table">
+        <thead><tr><th>Role</th><th>Ref</th><th>Value</th><th>Pads</th></tr></thead>
+        <tbody id="rail-tbody"></tbody>
+      </table>
+      <div class="empty-hint" id="empty-hint">请先在左侧选择一个电源网络</div>
+    </div>
+    <div class="table-actions">
+      <button class="btn-action" onclick="addSource()" id="btn-add-source" disabled>+ Source</button>
+      <button class="btn-action" onclick="addLoad()" id="btn-add-load" disabled>+ Load</button>
+      <button class="btn-action btn-remove" onclick="removeSelected()" id="btn-remove" disabled>- Remove</button>
+    </div>
+  </div>
+</div>
+
+<div class="bottom">
+  <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+    <label>Mesh Resolution (mm):</label>
+    <input type="number" id="mesh-resolution" value="0.1" min="0.05" max="2" step="0.05" style="width:55px">
+    <label style="margin-left:8px">Max Drop %:</label>
+    <input type="number" id="max-drop" value="5" min="1" max="100" step="1" style="width:50px">
+    <button class="btn-action" style="margin-left:12px" onclick="openStackup()">Stackup Settings</button>
+  </div>
+  <div class="bottom-right">
+    <button class="btn-main btn-run" id="btn-run" onclick="runAnalysis()" disabled>Run Simulation</button>
+    <button class="btn-main btn-close" onclick="cancel()">Close</button>
+  </div>
+</div>
+
+<!-- Stackup settings overlay -->
+<div class="picker-overlay" id="stackup-overlay">
+  <div class="picker-box" style="min-width:320px">
+    <h3>Stackup Settings</h3>
+    <div style="margin-bottom:10px">
+      <label style="font-size:12px;font-weight:600">Board Thickness (mm):</label>
+      <input type="number" id="board-thickness" value="1.6" min="0.1" max="10" step="0.1" style="width:70px;padding:3px 6px;border:1px solid #bbb;border-radius:3px;font-size:12px;margin-left:6px">
+    </div>
+    <div style="font-size:12px;font-weight:600;margin-bottom:6px">Copper Thickness per Layer (mm):</div>
+    <div id="stackup-layers" style="max-height:200px;overflow-y:auto"></div>
+    <div class="picker-btns" style="margin-top:10px">
+      <button onclick="closeStackup()">取消</button>
+      <button class="btn-ok" onclick="confirmStackup()">确定</button>
+    </div>
+  </div>
+</div>
+
+<!-- Component picker overlay -->
+<div class="picker-overlay" id="picker-overlay">
+  <div class="picker-box">
+    <h3 id="picker-title">选择器件</h3>
+    <input type="text" id="picker-search" placeholder="搜索位号或器件名..." style="width:100%;padding:4px 6px;border:1px solid #bbb;border-radius:3px;font-size:12px;margin-bottom:6px" oninput="filterPicker()">
+    <select id="picker-select" size="6" style="height:120px" onchange="onPickerSelectChange()"></select>
+    <div class="current-row" id="picker-current-row" style="display:none">
+      <label>电流 (A):</label>
+      <input type="number" id="picker-current" value="1.0" min="0.001" step="0.1">
+    </div>
+    <div id="picker-pads-section" style="display:none;margin-bottom:10px">
+      <div style="font-size:12px;font-weight:600;margin-bottom:4px">Select Pads:</div>
+      <label style="font-size:12px;display:flex;align-items:center;gap:4px;margin-bottom:4px;cursor:pointer">
+        <input type="checkbox" id="picker-pads-all" checked onchange="toggleAllPads()"> Use all connected pads
+      </label>
+      <div id="picker-pads-list" style="max-height:80px;overflow-y:auto;padding-left:4px"></div>
+    </div>
+    <div class="picker-btns">
+      <button onclick="closePicker()">取消</button>
+      <button class="btn-ok" onclick="confirmPicker()">确定</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ── State ──────────────────────────────────────────────────
+  let allNets = [];          // NetInfo[]
+  let allNetNames = [];      // string[] — 全部网络名（含非电源网络）
+  let allNetComponents = {}; // Record<string, ComponentInfo[]> — 所有网络的器件信息
+  let layerNames = {};       // Record<number, string> — 层ID→层名
+  let layerCuThickness = {}; // Record<number, number> — 层ID→铜厚(mm)
+  let selectedNetIdx = -1;
+  let selectedRowIdx = -1;
+  let pickerMode = '';       // 'source' | 'load'
+
+  // railConfig[netName] = { voltage, rows: [{role, ref_des, node_ids, current}] }
+  const railConfig = {};
+
+  // ── MessageBus ────────────────────────────────────────────
+  eda.sys_MessageBus.subscribe('kipida-main', (msg) => {
+    if (msg && msg.type === 'KIPIDA_NET_DATA') {
+      allNets = msg.nets;
+      allNetNames = msg.allNetNames || [];
+      allNetComponents = msg.allNetComponents || {};
+      layerNames = msg.layerNames || {};
+      // Initialize per-layer copper thickness (default 0.035mm = 1oz)
+      layerCuThickness = {};
+      const layerIds = Object.keys(layerNames).map(Number).sort((a, b) => a - b);
+      for (const lid of layerIds) {
+        layerCuThickness[lid] = 0.035;
+      }
+      initRailConfig();
+      renderNetList();
+      if (allNets.length > 0) selectNet(0);
+    }
+  });
+  eda.sys_MessageBus.publish('kipida-iframe', { type: 'KIPIDA_READY' });
+
+  // ── Init ──────────────────────────────────────────────────
+  function initRailConfig() {
+    for (const net of allNets) {
+      if (!railConfig[net.net]) {
+        railConfig[net.net] = { voltage: guessVoltage(net.net), rows: [] };
+      }
+    }
+  }
+
+  function guessVoltage(name) {
+    const n = name.toUpperCase();
+    // 优先匹配 XVY 格式（如 3V3→3.3, 1V8→1.8, 1V5→1.5, 1V2→1.2）
+    const mVx = n.match(/(\d+)V(\d+)/);
+    if (mVx) return parseFloat(mVx[1] + '.' + mVx[2]);
+    // 匹配带小数点的电压（如 3.3V, 1.8V）
+    const mDot = n.match(/(\d+\.\d+)V/);
+    if (mDot) return parseFloat(mDot[1]);
+    // 匹配整数电压（如 5V, 12V, 3V）
+    const mInt = n.match(/(\d+)V/);
+    if (mInt) return parseFloat(mInt[1]);
+    if (n.includes('GND')) return 0;
+    return 3.3;
+  }
+
+  // ── Net list ──────────────────────────────────────────────
+  function renderNetList() {
+    const el = document.getElementById('net-list');
+    if (!allNets || !allNets.length) {
+      el.innerHTML = '<div class="empty-hint">未检测到电源网络</div>';
+      return;
+    }
+    el.innerHTML = allNets.map((net, i) => {
+      const cfg = railConfig[net.net] || { voltage: 0 };
+      const comps = net.components || [];
+      const label = `${net.net} (${cfg.voltage}V) · ${comps.length} 器件`;
+      return `<div class="net-item${i === selectedNetIdx ? ' selected' : ''}" onclick="selectNet(${i})">${label}</div>`;
+    }).join('');
+  }
+
+  function selectNet(idx) {
+    selectedNetIdx = idx;
+    selectedRowIdx = -1;
+    renderNetList();
+    renderRailTable();
+    updateActionButtons();
+  }
+
+  // ── Rail table ────────────────────────────────────────────
+  function renderRailTable() {
+    const hint = document.getElementById('empty-hint');
+    const table = document.getElementById('rail-table');
+    const tbody = document.getElementById('rail-tbody');
+
+    if (selectedNetIdx < 0) {
+      hint.style.display = 'block';
+      table.style.display = 'none';
+      return;
+    }
+
+    hint.style.display = 'none';
+    table.style.display = 'table';
+
+    const net = allNets[selectedNetIdx];
+    const cfg = railConfig[net.net];
+    document.getElementById('rail-voltage').value = cfg.voltage;
+
+    tbody.innerHTML = cfg.rows.map((row, i) => {
+      const roleClass = row.role === 'SOURCE' ? 'role-source' : 'role-load';
+      const valueCell = row.role === 'LOAD'
+        ? `${row.current}A`
+        : '---';
+      const padsCount = row.node_ids.length;
+      return `<tr class="${i === selectedRowIdx ? 'selected-row' : ''}" onclick="selectRow(${i})" ondblclick="editRow(${i})">
+        <td class="${roleClass}">${row.role}</td>
+        <td>${row.ref_des}</td>
+        <td>${valueCell}</td>
+        <td>${padsCount}</td>
+      </tr>`;
+    }).join('');
+
+    updateRunButton();
+  }
+
+  function selectRow(idx) {
+    selectedRowIdx = idx;
+    renderRailTable();
+    updateActionButtons();
+  }
+
+  function editRow(idx) {
+    if (selectedNetIdx < 0) return;
+    const net = allNets[selectedNetIdx];
+    const cfg = railConfig[net.net];
+    const row = cfg.rows[idx];
+    if (!row) return;
+
+    const mode = row.role === 'SOURCE' ? 'source' : 'load';
+    pickerMode = mode;
+    editingRowIdx = idx;
+
+    const comp = (net.components || []).find(c => c.ref_des === row.ref_des);
+    pickerComponents = comp ? [comp] : [{ ref_des: row.ref_des, node_ids: row.node_ids, pad_numbers: [] }];
+
+    document.getElementById('picker-search').style.display = 'none';
+    document.getElementById('picker-title').textContent = mode === 'source' ? '编辑电压源器件' : '编辑负载器件';
+    document.getElementById('picker-current-row').style.display = mode === 'load' ? 'flex' : 'none';
+    if (mode === 'load') {
+      document.getElementById('picker-current').value = row.current;
+    }
+    renderPickerOptions(pickerComponents);
+    const select = document.getElementById('picker-select');
+    select.style.display = 'none';
+    select.selectedIndex = 0;
+
+    // Show pads with current selection
+    const fullComp = comp || pickerComponents[0];
+    const isAllSelected = row.node_ids.length === fullComp.node_ids.length;
+    renderPadsList(fullComp, isAllSelected ? undefined : row.node_ids);
+
+    document.getElementById('picker-overlay').classList.add('show');
+  }
+
+  let editingRowIdx = -1;
+
+  function updateVoltage() {
+    if (selectedNetIdx < 0) return;
+    const net = allNets[selectedNetIdx];
+    railConfig[net.net].voltage = parseFloat(document.getElementById('rail-voltage').value) || 0;
+    renderNetList();
+  }
+
+  function updateCurrent(rowIdx, val) {
+    if (selectedNetIdx < 0) return;
+    const net = allNets[selectedNetIdx];
+    railConfig[net.net].rows[rowIdx].current = parseFloat(val) || 1.0;
+  }
+
+  // ── Action buttons ────────────────────────────────────────
+  function updateActionButtons() {
+    const hasNet = selectedNetIdx >= 0;
+    const hasRow = selectedRowIdx >= 0;
+    document.getElementById('btn-add-source').disabled = !hasNet;
+    document.getElementById('btn-add-load').disabled = !hasNet;
+    document.getElementById('btn-remove').disabled = !hasNet || !hasRow;
+  }
+
+  function updateRunButton() {
+    const hasAnySource = Object.values(railConfig).some(cfg =>
+      cfg.rows.some(r => r.role === 'SOURCE')
+    );
+    document.getElementById('btn-run').disabled = !hasAnySource;
+  }
+
+  // ── Add source / load ─────────────────────────────────────
+  function addSource() {
+    openPicker('source');
+  }
+
+  function addLoad() {
+    openPicker('load');
+  }
+
+  // picker 的可用器件缓存（用于搜索过滤）
+  let pickerComponents = [];
+
+  function openPicker(mode) {
+    if (selectedNetIdx < 0) return;
+    pickerMode = mode;
+    const net = allNets[selectedNetIdx];
+    const cfg = railConfig[net.net];
+    const usedRefs = new Set(cfg.rows.map(r => r.ref_des));
+
+    pickerComponents = (net.components || [])
+      .filter(c => !usedRefs.has(c.ref_des));
+
+    if (!pickerComponents.length) {
+      alert('该网络所有器件已添加');
+      return;
+    }
+
+    document.getElementById('picker-search').value = '';
+    document.getElementById('picker-title').textContent = mode === 'source' ? '选择电压源器件' : '选择负载器件';
+    document.getElementById('picker-current-row').style.display = mode === 'load' ? 'flex' : 'none';
+    document.getElementById('picker-pads-section').style.display = 'none';
+    renderPickerOptions(pickerComponents);
+    document.getElementById('picker-overlay').classList.add('show');
+  }
+
+  function renderPickerOptions(comps) {
+    const select = document.getElementById('picker-select');
+    select.innerHTML = comps.map(c => {
+      const label = c.device_name ? `${c.ref_des} (${c.device_name}) (${c.node_ids.length}p)` : `${c.ref_des} (${c.node_ids.length}p)`;
+      return `<option value="${c.ref_des}">${label}</option>`;
+    }).join('');
+    // Reset pad section when options change
+    document.getElementById('picker-pads-section').style.display = 'none';
+  }
+
+  function onPickerSelectChange() {
+    const select = document.getElementById('picker-select');
+    const refDes = select.value;
+    if (!refDes) {
+      document.getElementById('picker-pads-section').style.display = 'none';
+      return;
+    }
+    const net = allNets[selectedNetIdx];
+    const comp = pickerComponents.find(c => c.ref_des === refDes)
+      || (net.components || []).find(c => c.ref_des === refDes);
+    if (!comp || !comp.node_ids.length) {
+      document.getElementById('picker-pads-section').style.display = 'none';
+      return;
+    }
+    renderPadsList(comp);
+  }
+
+  function renderPadsList(comp, selectedNodeIds) {
+    document.getElementById('picker-pads-section').style.display = 'block';
+    const allCheck = document.getElementById('picker-pads-all');
+    const list = document.getElementById('picker-pads-list');
+    const allSelected = !selectedNodeIds;
+    allCheck.checked = allSelected;
+
+    list.innerHTML = comp.node_ids.map((nid, i) => {
+      const padNum = (comp.pad_numbers && comp.pad_numbers[i]) || (i + 1);
+      const checked = allSelected || (selectedNodeIds && selectedNodeIds.includes(nid));
+      const disabled = allSelected ? 'disabled' : '';
+      return `<label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer">
+        <input type="checkbox" class="pad-check" data-nid="${nid}" ${checked ? 'checked' : ''} ${disabled}> ${padNum}
+      </label>`;
+    }).join('');
+  }
+
+  function toggleAllPads() {
+    const allChecked = document.getElementById('picker-pads-all').checked;
+    document.querySelectorAll('.pad-check').forEach(cb => {
+      cb.checked = allChecked;
+      cb.disabled = allChecked;
+    });
+  }
+
+  function getSelectedNodeIds(comp) {
+    const allChecked = document.getElementById('picker-pads-all').checked;
+    if (allChecked) return comp.node_ids;
+    const selected = [];
+    document.querySelectorAll('.pad-check:checked').forEach(cb => {
+      selected.push(cb.dataset.nid);
+    });
+    return selected.length > 0 ? selected : comp.node_ids;
+  }
+
+  function filterPicker() {
+    const q = document.getElementById('picker-search').value.toLowerCase();
+    const filtered = q
+      ? pickerComponents.filter(c =>
+          c.ref_des.toLowerCase().includes(q) ||
+          (c.device_name && c.device_name.toLowerCase().includes(q))
+        )
+      : pickerComponents;
+    renderPickerOptions(filtered);
+  }
+
+  function closePicker() {
+    document.getElementById('picker-overlay').classList.remove('show');
+    document.getElementById('picker-search').style.display = '';
+    document.getElementById('picker-select').style.display = '';
+    document.getElementById('picker-pads-section').style.display = 'none';
+    editingRowIdx = -1;
+  }
+
+  function confirmPicker() {
+    const select = document.getElementById('picker-select');
+    const refDes = select.value;
+    if (!refDes) return;
+
+    const net = allNets[selectedNetIdx];
+    const comp = pickerComponents.find(c => c.ref_des === refDes)
+      || (net.components || []).find(c => c.ref_des === refDes);
+    if (!comp) return;
+
+    const selectedNodes = getSelectedNodeIds(comp);
+    const cfg = railConfig[net.net];
+
+    if (editingRowIdx >= 0) {
+      const row = cfg.rows[editingRowIdx];
+      if (row.role === 'LOAD') {
+        row.current = parseFloat(document.getElementById('picker-current').value) || 1.0;
+      }
+      row.node_ids = selectedNodes;
+      editingRowIdx = -1;
+    } else {
+      if (pickerMode === 'source') {
+        cfg.rows.push({ role: 'SOURCE', ref_des: refDes, node_ids: selectedNodes, current: 0 });
+      } else {
+        const current = parseFloat(document.getElementById('picker-current').value) || 1.0;
+        cfg.rows.push({ role: 'LOAD', ref_des: refDes, node_ids: selectedNodes, current });
+      }
+      selectedRowIdx = cfg.rows.length - 1;
+    }
+
+    closePicker();
+    renderRailTable();
+    updateActionButtons();
+  }
+
+  function removeSelected() {
+    if (selectedNetIdx < 0 || selectedRowIdx < 0) return;
+    const net = allNets[selectedNetIdx];
+    railConfig[net.net].rows.splice(selectedRowIdx, 1);
+    selectedRowIdx = -1;
+    renderRailTable();
+    updateActionButtons();
+  }
+
+  // ── Manual net ────────────────────────────────────────────
+  function addManualNet() {
+    const available = allNetNames.filter(n => !allNets.find(x => x.net === n));
+    if (!available.length) { alert('所有网络已添加'); return; }
+
+    const select = document.createElement('select');
+    select.style.cssText = 'width:100%;padding:4px;margin-bottom:8px;border:1px solid #bbb;border-radius:3px;font-size:12px';
+    available.forEach(n => {
+      const opt = document.createElement('option');
+      opt.value = n; opt.textContent = n;
+      select.appendChild(opt);
+    });
+
+    // Reuse picker overlay as a simple net selector
+    const box = document.querySelector('.picker-box');
+    document.getElementById('picker-title').textContent = '选择要添加的网络';
+    document.getElementById('picker-select').replaceWith(select);
+    document.getElementById('picker-current-row').style.display = 'none';
+    document.getElementById('picker-overlay').classList.add('show');
+
+    // Override confirm button temporarily
+    const btnOk = document.querySelector('.picker-btns .btn-ok');
+    const origOnclick = btnOk.onclick;
+    btnOk.onclick = () => {
+      const name = select.value;
+      if (name) {
+        allNets.push({ net: name, components: allNetComponents[name] || [] });
+        railConfig[name] = { voltage: guessVoltage(name), rows: [] };
+        renderNetList();
+        selectNet(allNets.length - 1);
+      }
+      // Restore original picker select element
+      const newSelect = document.createElement('select');
+      newSelect.id = 'picker-select';
+      newSelect.size = 6;
+      newSelect.style.height = '120px';
+      select.replaceWith(newSelect);
+      btnOk.onclick = origOnclick;
+      closePicker();
+    };
+  }
+
+  // ── Stackup settings ──────────────────────────────────────
+  function openStackup() {
+    const container = document.getElementById('stackup-layers');
+    const layerIds = Object.keys(layerNames).map(Number).sort((a, b) => a - b);
+    if (!layerIds.length) {
+      alert('未检测到铜箔层信息');
+      return;
+    }
+    container.innerHTML = layerIds.map(lid => {
+      const name = layerNames[lid] || `Layer ${lid}`;
+      const val = layerCuThickness[lid] || 0.035;
+      return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+        <span style="font-size:12px;min-width:100px">${name} (L${lid}):</span>
+        <input type="number" class="stackup-cu-input" data-lid="${lid}" value="${val}" min="0.005" max="0.21" step="0.005" style="width:70px;padding:2px 4px;border:1px solid #bbb;border-radius:3px;font-size:12px">
+        <span style="font-size:11px;color:#888">mm</span>
+      </div>`;
+    }).join('');
+    document.getElementById('stackup-overlay').classList.add('show');
+  }
+
+  function closeStackup() {
+    document.getElementById('stackup-overlay').classList.remove('show');
+  }
+
+  function confirmStackup() {
+    document.querySelectorAll('.stackup-cu-input').forEach(input => {
+      const lid = parseInt(input.dataset.lid);
+      layerCuThickness[lid] = parseFloat(input.value) || 0.035;
+    });
+    closeStackup();
+  }
+
+  // ── Run / Cancel ──────────────────────────────────────────
+  function runAnalysis() {
+    const meshResolution = parseFloat(document.getElementById('mesh-resolution').value) || 0.1;
+    const maxDropPct = parseFloat(document.getElementById('max-drop').value) || 5;
+    const boardThickness = parseFloat(document.getElementById('board-thickness').value) || 1.6;
+    const rails = allNets.map(net => {
+      const cfg = railConfig[net.net];
+      const sources = cfg.rows.filter(r => r.role === 'SOURCE').map(r => ({
+        ref_des: r.ref_des, node_ids: r.node_ids
+      }));
+      const loads = cfg.rows.filter(r => r.role === 'LOAD').map(r => ({
+        ref_des: r.ref_des, node_ids: r.node_ids, current: r.current
+      }));
+      return { net: net.net, voltage: cfg.voltage, sources, loads };
+    }).filter(r => r.sources.length > 0 || r.loads.length > 0);
+
+    eda.sys_MessageBus.publish('kipida-iframe', {
+      type: 'KIPIDA_RUN',
+      config: { mesh_resolution: meshResolution, max_drop_pct: maxDropPct, board_thickness: boardThickness, layer_cu_thickness: layerCuThickness, rails }
+    });
+  }
+
+  function cancel() {
+    eda.sys_MessageBus.publish('kipida-iframe', { type: 'KIPIDA_CANCEL' });
+  }
+</script>
+</body>
+</html>
