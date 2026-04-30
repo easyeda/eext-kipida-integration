@@ -11,11 +11,6 @@ import os
 import time
 import traceback
 
-# 将 KiPIDA 源码目录加入 Python 路径
-KIPIDA_PATH = os.environ.get("KIPIDA_PATH", r"D:\PDN\KiPIDA")
-if KIPIDA_PATH not in sys.path:
-    sys.path.insert(0, KIPIDA_PATH)
-
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel

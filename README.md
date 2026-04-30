@@ -47,7 +47,6 @@
 |------|------|
 | 嘉立创EDA专业版 ≥ 2.3.0 | 插件运行环境 |
 | Python 3.10+ | 运行 kipida-service |
-| KiPIDA 源码 | 提供求解器核心 |
 
 ### 1. 获取 kipida-service
 
@@ -59,34 +58,14 @@ git clone https://github.com/easyeda/eext-kipida-integration.git
 
 仅需其中的 `kipida-service/` 目录。
 
-### 2. 安装 KiPIDA
-
-从 [KiPIDA GitHub](https://github.com/kbralten/KiPIDA) 下载源码到本地，例如 `D:\PDN\KiPIDA`。
-
-### 3. 配置 KiPIDA 路径
-
-打开 `kipida-service/main.py`，修改第 14 行的默认路径：
-
-![配置 KiPIDA 路径](images/输入KIPIDA源码路径.png)
-
-```python
-KIPIDA_PATH = os.environ.get("KIPIDA_PATH", r"D:\PDN\KiPIDA")
-```
-
-也可以通过环境变量覆盖，无需修改代码：
-
-```bash
-set KIPIDA_PATH=D:\你的路径\KiPIDA
-```
-
-### 4. 安装 Python 依赖
+### 2. 安装 Python 依赖
 
 ```bash
 cd kipida-service
 pip install -r requirements.txt
 ```
 
-### 5. 启动 Python 服务
+### 3. 启动 Python 服务
 
 ```bash
 cd kipida-service
@@ -95,7 +74,7 @@ python -m uvicorn main:app --reload --port 5000
 
 服务启动后访问 http://localhost:5000/docs 可查看 API 文档。
 
-### 6. 安装 EasyEDA 插件
+### 4. 安装 EasyEDA 插件
 
 在嘉立创EDA专业版中：**高级 → 扩展管理器 → 导入扩展**，选择 `build/dist/kipida-bridge_v1.0.0.eext`。
 
