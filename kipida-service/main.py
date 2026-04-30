@@ -90,6 +90,10 @@ class KipidaInput(BaseModel):
     copper_pours: List[CopperPour] = []
     mesh_resolution: Optional[float] = 0.1
     max_drop_pct: Optional[float] = 5.0
+    board_thickness: Optional[float] = 1.6
+    outer_cu_mm: Optional[float] = 0.035
+    inner_cu_mm: Optional[float] = 0.035
+    layer_cu_thickness: Optional[Dict[str, float]] = None
     metadata: Optional[Metadata] = None
 
 
@@ -337,7 +341,7 @@ def _build_geometry(data, active_nets):
     return result
 
 
-def _rasterize(geometry, grid_size_mm):
+def _rasterize(geometry, grid_size_mm, layer_cu_map=None):
     """
     Rasterize geometry onto a regular grid, create Mesh with lateral conductance edges.
     Replicates KiPIDA Mesher logic.
@@ -382,13 +386,23 @@ def _rasterize(geometry, grid_size_mm):
     all_layers = sorted(set(layer for (net, layer) in geometry.keys()))
     all_nets = sorted(set(net for (net, layer) in geometry.keys()))
 
-    g_lat = COPPER_THICKNESS / COPPER_RESISTIVITY
+    # Outer layers = first and last; inner = everything else
+    outer_layer_set = set()
+    if len(all_layers) >= 2:
+        outer_layer_set = {all_layers[0], all_layers[-1]}
+    elif len(all_layers) == 1:
+        outer_layer_set = {all_layers[0]}
+
+    if not layer_cu_map:
+        layer_cu_map = {}
 
     node_counter = 0
 
     for net in all_nets:
         net_layers = sorted(layer for (n, layer) in geometry.keys() if n == net)
         for layer_id in net_layers:
+            cu_thickness = layer_cu_map.get(str(layer_id), layer_cu_map.get(layer_id, COPPER_THICKNESS))
+            g_lat = cu_thickness / COPPER_RESISTIVITY
             poly = geometry.get((net, layer_id))
             if poly is None or poly.is_empty:
                 continue
@@ -466,7 +480,7 @@ def _rasterize(geometry, grid_size_mm):
     return mesh, node_net_map, grid_origin, all_layers
 
 
-def _add_vias(mesh, data, active_nets, all_layers, grid_size_mm, grid_origin):
+def _add_vias(mesh, data, active_nets, all_layers, grid_size_mm, grid_origin, substrate_height=SUBSTRATE_HEIGHT):
     """Add vertical via/PTH connections between layers."""
     import math as _math
 
@@ -497,7 +511,7 @@ def _add_vias(mesh, data, active_nets, all_layers, grid_size_mm, grid_origin):
             area = _math.pi * (dia_mm * VIA_PLATING_THICKNESS - VIA_PLATING_THICKNESS ** 2)
             if area <= 0:
                 area = 1e-6
-            g_via = area / (COPPER_RESISTIVITY * SUBSTRATE_HEIGHT)
+            g_via = area / (COPPER_RESISTIVITY * substrate_height)
             mesh.add_edge_direct(nid_a, nid_b, g_via)
 
     # Also connect junction nodes that bridge layers (track layer transitions)
@@ -647,13 +661,16 @@ def build_mesh_and_solve(data: KipidaInput) -> Dict[str, float]:
         raise ValueError("无法从输入数据构建铜皮几何")
 
     grid_size_mm = data.mesh_resolution or GRID_SIZE_MM
-    mesh, node_net_map, grid_origin, all_layers = _rasterize(geometry, grid_size_mm)
+    layer_cu_map = data.layer_cu_thickness or {}
+    mesh, node_net_map, grid_origin, all_layers = _rasterize(geometry, grid_size_mm, layer_cu_map)
 
     if not mesh.nodes:
         raise ValueError("栅格化后没有网格节点")
 
-    # 3. Via connections
-    _add_vias(mesh, data, active_nets, all_layers, grid_size_mm, grid_origin)
+    # 3. Via connections — substrate height = board_thickness / (num_layers - 1)
+    num_layers = len(all_layers) if all_layers else 2
+    substrate_height = (data.board_thickness or 1.6) / max(num_layers - 1, 1)
+    _add_vias(mesh, data, active_nets, all_layers, grid_size_mm, grid_origin, substrate_height)
 
     # 4. Snap source/load nodes to nearest grid nodes
     sources = []
@@ -863,10 +880,16 @@ def generate_plot_images(mesh_points: list, mesh_resolution: float = 0.5, all_la
             )
 
     # 按 net 建立固定色阶：vmax=source电压, vmin=source电压*(1-max_drop_pct/100)
+    # 对于 0V 网络（如 GND），使用对称范围 ±(max_drop_pct/50)
     net_scale: Dict[str, tuple] = {}
     for r in net_results:
         scale_max = r.max_voltage
-        scale_min = scale_max * (1.0 - max_drop_pct / 100.0)
+        if abs(scale_max) < 1e-6:
+            sym_range = max_drop_pct / 50.0
+            scale_min = -sym_range
+            scale_max = sym_range
+        else:
+            scale_min = scale_max * (1.0 - max_drop_pct / 100.0)
         net_scale[r.net] = (scale_min, scale_max)
 
     net_points: Dict[str, list] = {}

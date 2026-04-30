@@ -35,6 +35,8 @@ interface NetInfo {
 interface UserConfig {
   mesh_resolution: number;
   max_drop_pct: number;
+  board_thickness: number;
+  layer_cu_thickness: Record<string, number>;
   rails: Array<{
     net: string;
     voltage: number;
@@ -49,7 +51,7 @@ function isPowerNet(netName: string): boolean {
   return POWER_NET_PATTERN.test(netName);
 }
 
-function buildNetInfos(nodes: ReturnType<PcbDataConverter['getNodes']>): NetInfo[] {
+function buildNetInfos(nodes: ReturnType<PcbDataConverter['getNodes']>): { powerNets: NetInfo[]; allNetComponents: Record<string, ComponentInfo[]> } {
   // Group by net → ref_des
   const netMap = new Map<string, Map<string, ComponentInfo>>();
   for (const node of nodes) {
@@ -64,14 +66,17 @@ function buildNetInfos(nodes: ReturnType<PcbDataConverter['getNodes']>): NetInfo
     comp.pad_numbers.push(node.pad_number || '?');
   }
 
-  const result: NetInfo[] = [];
+  const allNetComponents: Record<string, ComponentInfo[]> = {};
+  const powerNets: NetInfo[] = [];
   for (const [net, compMap] of netMap.entries()) {
-    if (!isPowerNet(net)) continue;
     const components = Array.from(compMap.values()).sort((a, b) => a.ref_des.localeCompare(b.ref_des));
-    result.push({ net, components });
+    allNetComponents[net] = components;
+    if (isPowerNet(net)) {
+      powerNets.push({ net, components });
+    }
   }
-  result.sort((a, b) => a.net.localeCompare(b.net));
-  return result;
+  powerNets.sort((a, b) => a.net.localeCompare(b.net));
+  return { powerNets, allNetComponents };
 }
 
 function userConfigToSourcesLoads(
@@ -96,7 +101,7 @@ function userConfigToSourcesLoads(
   return { sources, loads };
 }
 
-async function showConfigPanel(netInfos: NetInfo[], allNetNames: string[]): Promise<UserConfig | null> {
+async function showConfigPanel(netInfos: NetInfo[], allNetNames: string[], allNetComponents: Record<string, ComponentInfo[]>, layerNames: Record<number, string>): Promise<UserConfig | null> {
   return new Promise((resolve) => {
     let resolved = false;
     let task: any = null;
@@ -107,7 +112,7 @@ async function showConfigPanel(netInfos: NetInfo[], allNetNames: string[]): Prom
 
     task = eda.sys_MessageBus.subscribe('kipida-iframe', (msg: any) => {
       if (msg?.type === 'KIPIDA_READY') {
-        eda.sys_MessageBus.publish('kipida-main', { type: 'KIPIDA_NET_DATA', nets: netInfos, allNetNames });
+        eda.sys_MessageBus.publish('kipida-main', { type: 'KIPIDA_NET_DATA', nets: netInfos, allNetNames, allNetComponents, layerNames });
       } else if (msg?.type === 'KIPIDA_RUN' && !resolved) {
         resolved = true;
         cleanup();
@@ -121,7 +126,7 @@ async function showConfigPanel(netInfos: NetInfo[], allNetNames: string[]): Prom
       }
     });
 
-    eda.sys_IFrame.openIFrame('/ui/config.html', 520, 600, 'kipida-config', {
+    eda.sys_IFrame.openIFrame('/ui/config.html', 1000, 600, 'kipida-config', {
       maximizeButton: false,
       minimizeButton: false,
       buttonCallbackFn: (btn) => {
@@ -166,11 +171,11 @@ export async function runIRDropAnalysis(): Promise<void> {
     eda.sys_LoadingAndProgressBar.showProgressBar(35, 'pdn-analysis');
 
     // Step 3: 打开配置面板
-    const netInfos = buildNetInfos(kipidaData.nodes);
+    const { powerNets: netInfos, allNetComponents } = buildNetInfos(kipidaData.nodes);
     const allNetNames = await eda.pcb_Net.getAllNetsName();
     eda.sys_LoadingAndProgressBar.showProgressBar(100, 'pdn-analysis');
 
-    const userConfig = await showConfigPanel(netInfos, allNetNames);
+    const userConfig = await showConfigPanel(netInfos, allNetNames, allNetComponents, easyedaData.layerNames || {});
     if (!userConfig) {
       console.log('[KiPIDA] 用户取消配置');
       return;
@@ -184,6 +189,8 @@ export async function runIRDropAnalysis(): Promise<void> {
     kipidaData.loads = loads;
     kipidaData.mesh_resolution = userConfig.mesh_resolution;
     kipidaData.max_drop_pct = userConfig.max_drop_pct;
+    (kipidaData as any).board_thickness = userConfig.board_thickness;
+    (kipidaData as any).layer_cu_thickness = userConfig.layer_cu_thickness;
 
     console.log('[KiPIDA] 用户配置:', userConfig);
     eda.sys_LoadingAndProgressBar.showProgressBar(30, 'pdn-analysis');

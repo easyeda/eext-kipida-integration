@@ -9,14 +9,15 @@ export class PcbExtractor {
     const netNames = await eda.pcb_Net.getAllNetsName();
     console.log(`[PcbExtractor] 找到 ${netNames.length} 个网络`);
 
-    // 获取铜箔层名称映射（type=SIGNAL），并识别外层（最小和最大层ID）
+    // 获取铜箔层名称映射（type=SIGNAL/TOP/BOTTOM），并识别外层
     const layerNames: Record<number, string> = {};
     const outerLayerIds = new Set<number>();
     try {
       const allLayers = await eda.pcb_Layer.getAllLayers();
       const signalLayerIds: number[] = [];
       for (const layer of allLayers) {
-        if ((layer.type as string) === 'SIGNAL') {
+        const t = layer.type as string;
+        if (t === 'SIGNAL' || t === 'TOP' || t === 'BOTTOM') {
           const id = layer.id as number;
           layerNames[id] = layer.name;
           signalLayerIds.push(id);
@@ -67,8 +68,8 @@ export class PcbExtractor {
       for (const comp of components) {
         const refDes = typeof comp.getState_Designator === 'function'
           ? comp.getState_Designator() : undefined;
-        const deviceName = typeof comp.getState_Name === 'function'
-          ? comp.getState_Name() : undefined;
+        const deviceName = typeof comp.getState_OtherProperty === 'function'
+          ? (comp.getState_OtherProperty()?.['Device'] as string | undefined) : undefined;
         const compId = comp.getState_PrimitiveId();
         if (!compId) continue;
 
@@ -254,7 +255,28 @@ export class PcbExtractor {
     }
 
     console.log(`[PcbExtractor] 提取完成: tracks=${tracks.length}, vias=${vias.length}, pads=${pads.length}, copperPours=${copperPours.length}`);
-    return { tracks, vias, pads, copperPours, layerNames, outerLayerIds };
+
+    // 过滤 layerNames：只保留实际有数据的铜箔层
+    const usedLayers = new Set<number>();
+    for (const t of tracks) usedLayers.add(t.layer);
+    for (const p of copperPours) usedLayers.add(p.layer);
+    for (const p of pads) { if (p.layer) usedLayers.add(p.layer); }
+    const filteredLayerNames: Record<number, string> = {};
+    for (const lid of Object.keys(layerNames)) {
+      const id = Number(lid);
+      if (usedLayers.has(id)) filteredLayerNames[id] = layerNames[id];
+    }
+    const filteredOuterLayerIds = new Set<number>();
+    const filteredIds = Object.keys(filteredLayerNames).map(Number).sort((a, b) => a - b);
+    if (filteredIds.length >= 2) {
+      filteredOuterLayerIds.add(filteredIds[0]);
+      filteredOuterLayerIds.add(filteredIds[filteredIds.length - 1]);
+    } else {
+      filteredIds.forEach(id => filteredOuterLayerIds.add(id));
+    }
+    console.log(`[PcbExtractor] 实际使用铜箔层:`, filteredLayerNames);
+
+    return { tracks, vias, pads, copperPours, layerNames: filteredLayerNames, outerLayerIds: filteredOuterLayerIds };
   }
 
   private parsePolygonVertices(source: any): Array<{ x: number; y: number }> {
