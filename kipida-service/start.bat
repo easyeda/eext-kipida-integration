@@ -1,6 +1,15 @@
 @echo off
 chcp 65001 >nul 2>&1
 
+echo [KiPIDA] Initializing KiPIDA submodule...
+git -C "%~dp0.." submodule update --init --recursive >nul 2>&1
+if not exist "%~dp0KiPIDA\mesh.py" (
+    echo [KiPIDA] ERROR: KiPIDA submodule not found.
+    echo [KiPIDA] Please run: git submodule update --init --recursive
+    pause
+    exit /b 1
+)
+
 echo [KiPIDA] Checking Python environment...
 
 python --version >nul 2>&1

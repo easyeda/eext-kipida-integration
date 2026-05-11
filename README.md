@@ -47,20 +47,27 @@
 |------|------|
 | 嘉立创EDA专业版 ≥ 2.3.0 | 插件运行环境 |
 | Python 3.10+ | 运行 kipida-service |
+| Git | 拉取 KiPIDA submodule |
 
 ### 1. 获取 kipida-service
 
-从 GitHub 仓库下载 `kipida-service` 文件夹：
+从 GitHub 仓库克隆（需加 `--recursive` 以拉取 KiPIDA 子模块）：
 
 ```bash
-git clone https://github.com/easyeda/eext-kipida-integration.git
+git clone --recursive https://github.com/easyeda/eext-kipida-integration.git
 ```
 
-仅需其中的 `kipida-service/` 目录。
+如果已经克隆但未初始化子模块：
+
+```bash
+git submodule update --init --recursive
+```
+
+仅需其中的 `kipida-service/` 目录。KiPIDA 核心算法（`mesh.py`、`solver.py`）通过 git submodule 引用自原项目 [kbralten/KiPIDA](https://github.com/kbralten/KiPIDA)，位于 `kipida-service/KiPIDA/`。
 
 ### 2. 启动 Python 服务
 
-双击 `kipida-service/start.bat`，脚本会自动安装依赖并启动服务。
+双击 `kipida-service/start.bat`，脚本会自动初始化子模块、安装依赖并启动服务。
 
 也可以手动启动：
 
@@ -95,7 +102,9 @@ eext-kipida-integration/
 │   ├── config.html         # 配置面板
 │   └── results.html        # 结果展示面板
 ├── kipida-service/
+│   ├── KiPIDA/             # git submodule → github.com/kbralten/KiPIDA
 │   ├── main.py             # FastAPI 服务（调用 KiPIDA 求解器）
+│   ├── start.bat           # 一键启动脚本
 │   └── requirements.txt
 ├── build/dist/             # 编译产物（.eext 文件）
 └── extension.json          # 插件配置
@@ -116,7 +125,17 @@ npm run build
 
 ## 注意事项
 
-- KiPIDA 源码**不需要修改**，插件仅调用其 `solver.py` 和 `mesh.py`
+- KiPIDA 核心算法通过 git submodule 引用自 [kbralten/KiPIDA](https://github.com/kbralten/KiPIDA)，**无需修改**
 - Python 服务必须在运行分析前启动，默认端口 5000
 - 服务地址可在插件菜单 **PDN 分析 → 配置服务地址** 中修改
 - `mesh_resolution` 越小精度越高，但分析时间显著增加（推荐 0.2~0.5mm）
+
+## 更新 KiPIDA
+
+当 KiPIDA 原项目有更新时，执行以下命令同步：
+
+```bash
+git submodule update --remote kipida-service/KiPIDA
+git add kipida-service/KiPIDA
+git commit -m "chore: update KiPIDA submodule"
+```

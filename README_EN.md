@@ -47,20 +47,27 @@ After clicking **Run Simulation**, the results window pops up automatically:
 |------------|-------------|
 | EasyEDA Professional ≥ 2.3.0 | Plugin runtime environment |
 | Python 3.10+ | Run kipida-service |
+| Git | Pull KiPIDA submodule |
 
 ### 1. Get kipida-service
 
-Download the `kipida-service` folder from the GitHub repository:
+Clone from the GitHub repository (use `--recursive` to pull the KiPIDA submodule):
 
 ```bash
-git clone https://github.com/easyeda/eext-kipida-integration.git
+git clone --recursive https://github.com/easyeda/eext-kipida-integration.git
 ```
 
-Only the `kipida-service/` directory is needed.
+If already cloned without initializing the submodule:
+
+```bash
+git submodule update --init --recursive
+```
+
+Only the `kipida-service/` directory is needed. The KiPIDA core algorithms (`mesh.py`, `solver.py`) are referenced via git submodule from the original project [kbralten/KiPIDA](https://github.com/kbralten/KiPIDA), located at `kipida-service/KiPIDA/`.
 
 ### 2. Start Python Service
 
-Double-click `kipida-service/start.bat`. The script will automatically install dependencies and start the service.
+Double-click `kipida-service/start.bat`. The script will automatically initialize the submodule, install dependencies, and start the service.
 
 You can also start manually:
 
@@ -95,7 +102,9 @@ eext-kipida-integration/
 │   ├── config.html         # Configuration panel
 │   └── results.html        # Results display panel
 ├── kipida-service/
+│   ├── KiPIDA/             # git submodule → github.com/kbralten/KiPIDA
 │   ├── main.py             # FastAPI service (calls KiPIDA solver)
+│   ├── start.bat           # One-click startup script
 │   └── requirements.txt
 ├── build/dist/             # Build output (.eext files)
 └── extension.json          # Extension configuration
@@ -116,7 +125,17 @@ Build output goes to `build/dist/kipida-bridge_v1.0.0.eext`.
 
 ## Notes
 
-- KiPIDA source code **does not need modification**. The extension only calls its `solver.py` and `mesh.py`
+- KiPIDA core algorithms are referenced via git submodule from [kbralten/KiPIDA](https://github.com/kbralten/KiPIDA) — **no modification needed**
 - Python service must be started before running analysis, default port is 5000
 - Service address can be modified in extension menu **PDN Analysis → Configure Service Address**
 - Smaller `mesh_resolution` means higher precision but significantly longer analysis time (recommended: 0.2~0.5mm)
+
+## Updating KiPIDA
+
+When the upstream KiPIDA project has updates, run the following to sync:
+
+```bash
+git submodule update --remote kipida-service/KiPIDA
+git add kipida-service/KiPIDA
+git commit -m "chore: update KiPIDA submodule"
+```

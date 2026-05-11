@@ -11,6 +11,9 @@ import os
 import time
 import traceback
 
+# KiPIDA 核心算法通过 git submodule 引入
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'KiPIDA'))
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
