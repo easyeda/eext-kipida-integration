@@ -47,29 +47,32 @@
 |------|------|
 | 嘉立创EDA专业版 ≥ 2.3.0 | 插件运行环境 |
 | Python 3.10+ | 运行 kipida-service |
-| Git | 拉取 KiPIDA submodule |
 
-### 1. 获取 kipida-service
+### 1. 安装 EasyEDA 插件
 
-从 GitHub 仓库克隆（需加 `--recursive` 以拉取 KiPIDA 子模块）：
+在嘉立创EDA专业版中：**高级 → 扩展管理器 → 导入扩展**，选择 `build/dist/kipida-bridge_v1.0.0.eext`。
+
+也可通过嘉立创EDA扩展商店直接搜索安装。
+
+### 2. 获取 kipida-service
+
+从 GitHub 仓库下载 `kipida-service` 文件夹：
 
 ```bash
-git clone --recursive https://github.com/easyeda/eext-kipida-integration.git
+git clone https://github.com/easyeda/eext-kipida-integration.git
 ```
 
-如果已经克隆但未初始化子模块：
+仅需其中的 `kipida-service/` 目录。
 
-```bash
-git submodule update --init --recursive
-```
+### 3. 启动 Python 服务
 
-仅需其中的 `kipida-service/` 目录。KiPIDA 核心算法（`mesh.py`、`solver.py`）通过 git submodule 引用自原项目 [kbralten/KiPIDA](https://github.com/kbralten/KiPIDA)，位于 `kipida-service/KiPIDA/`。
+双击 `kipida-service/start.bat` 即可。脚本会自动完成以下操作：
 
-### 2. 启动 Python 服务
+1. 从 GitHub 下载 KiPIDA 核心算法文件（`mesh.py`、`solver.py`）
+2. 安装 Python 依赖（fastapi、numpy、scipy 等）
+3. 启动服务（默认端口 5000）
 
-双击 `kipida-service/start.bat`，脚本会自动初始化子模块、安装依赖并启动服务。
-
-也可以手动启动：
+如需手动启动：
 
 ```bash
 cd kipida-service
@@ -78,12 +81,6 @@ python -m uvicorn main:app --reload --port 5000
 ```
 
 服务启动后访问 http://localhost:5000/docs 可查看 API 文档。
-
-### 3. 安装 EasyEDA 插件
-
-在嘉立创EDA专业版中：**高级 → 扩展管理器 → 导入扩展**，选择 `build/dist/kipida-bridge_v1.0.0.eext`。
-
-也可通过嘉立创EDA扩展商店直接搜索安装。
 
 ---
 
@@ -102,7 +99,6 @@ eext-kipida-integration/
 │   ├── config.html         # 配置面板
 │   └── results.html        # 结果展示面板
 ├── kipida-service/
-│   ├── KiPIDA/             # git submodule → github.com/kbralten/KiPIDA
 │   ├── main.py             # FastAPI 服务（调用 KiPIDA 求解器）
 │   ├── start.bat           # 一键启动脚本
 │   └── requirements.txt
@@ -125,17 +121,14 @@ npm run build
 
 ## 注意事项
 
-- KiPIDA 核心算法通过 git submodule 引用自 [kbralten/KiPIDA](https://github.com/kbralten/KiPIDA)，**无需修改**
+- KiPIDA 核心算法（`mesh.py`、`solver.py`）来自 [kbralten/KiPIDA](https://github.com/kbralten/KiPIDA)，首次运行脚本时自动下载
+- 可通过环境变量 `KIPIDA_PATH` 自定义 KiPIDA 路径，`start.bat` 默认使用 `kipida-service/KiPIDA/`
 - Python 服务必须在运行分析前启动，默认端口 5000
 - 服务地址可在插件菜单 **PDN 分析 → 配置服务地址** 中修改
 - `mesh_resolution` 越小精度越高，但分析时间显著增加（推荐 0.2~0.5mm）
 
 ## 更新 KiPIDA
 
-当 KiPIDA 原项目有更新时，执行以下命令同步：
+删除 `kipida-service/KiPIDA/` 下的 `mesh.py` 和 `solver.py`，重新运行 `start.bat` 即可自动下载最新版本。也可手动从原项目下载覆盖：
 
-```bash
-git submodule update --remote kipida-service/KiPIDA
-git add kipida-service/KiPIDA
-git commit -m "chore: update KiPIDA submodule"
-```
+**原项目地址**: [https://github.com/kbralten/KiPIDA](https://github.com/kbralten/KiPIDA)

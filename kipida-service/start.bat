@@ -1,14 +1,39 @@
 @echo off
 chcp 65001 >nul 2>&1
 
-echo [KiPIDA] Initializing KiPIDA submodule...
-git -C "%~dp0.." submodule update --init --recursive >nul 2>&1
-if not exist "%~dp0KiPIDA\mesh.py" (
-    echo [KiPIDA] ERROR: KiPIDA submodule not found.
-    echo [KiPIDA] Please run: git submodule update --init --recursive
-    pause
-    exit /b 1
+echo [KiPIDA] Checking KiPIDA path...
+if not defined KIPIDA_PATH (
+    set "KIPIDA_PATH=%~dp0KiPIDA"
 )
+if not exist "%KIPIDA_PATH%" (
+    mkdir "%KIPIDA_PATH%"
+)
+
+if not exist "%KIPIDA_PATH%\mesh.py" (
+    echo [KiPIDA] mesh.py not found, downloading from GitHub...
+    curl -sL -o "%KIPIDA_PATH%\mesh.py" "https://raw.githubusercontent.com/kbralten/KiPIDA/main/mesh.py"
+    if %errorlevel% neq 0 (
+        echo [KiPIDA] ERROR: Failed to download mesh.py
+        echo [KiPIDA] Please manually download from https://github.com/kbralten/KiPIDA
+        pause
+        exit /b 1
+    )
+    echo [KiPIDA] mesh.py downloaded.
+)
+
+if not exist "%KIPIDA_PATH%\solver.py" (
+    echo [KiPIDA] solver.py not found, downloading from GitHub...
+    curl -sL -o "%KIPIDA_PATH%\solver.py" "https://raw.githubusercontent.com/kbralten/KiPIDA/main/solver.py"
+    if %errorlevel% neq 0 (
+        echo [KiPIDA] ERROR: Failed to download solver.py
+        echo [KiPIDA] Please manually download from https://github.com/kbralten/KiPIDA
+        pause
+        exit /b 1
+    )
+    echo [KiPIDA] solver.py downloaded.
+)
+
+echo [KiPIDA] Using KiPIDA at: %KIPIDA_PATH%
 
 echo [KiPIDA] Checking Python environment...
 

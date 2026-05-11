@@ -101,6 +101,46 @@ function userConfigToSourcesLoads(
   return { sources, loads };
 }
 
+async function showServiceNotFoundDialog(api: KipidaApiClient): Promise<boolean> {
+  return new Promise((resolve) => {
+    let resolved = false;
+    let task: any = null;
+
+    const cleanup = () => {
+      if (task) { task.cancel(); task = null; }
+    };
+
+    task = eda.sys_MessageBus.subscribe('kipida-service-dialog', async (msg: any) => {
+      if (msg?.type === 'retry' && !resolved) {
+        const ok = await api.checkService();
+        if (ok) {
+          resolved = true;
+          cleanup();
+          eda.sys_IFrame.closeIFrame('kipida-service-guide');
+          resolve(true);
+        } else {
+          eda.sys_Dialog.showInformationMessage('服务仍未检测到，请确认已启动', '检测失败');
+        }
+      }
+    });
+
+    eda.sys_IFrame.openIFrame('/ui/service-not-found.html', 480, 520, 'kipida-service-guide', {
+      maximizeButton: false,
+      minimizeButton: false,
+      buttonCallbackFn: (btn: string) => {
+        if (btn === 'close' && !resolved) {
+          resolved = true;
+          cleanup();
+          resolve(false);
+        }
+      },
+    }).catch(() => {
+      cleanup();
+      resolve(false);
+    });
+  });
+}
+
 async function showConfigPanel(netInfos: NetInfo[], allNetNames: string[], allNetComponents: Record<string, ComponentInfo[]>, layerNames: Record<number, string>): Promise<UserConfig | null> {
   return new Promise((resolve) => {
     let resolved = false;
@@ -203,12 +243,10 @@ export async function runIRDropAnalysis(): Promise<void> {
 
     const isRunning = await api.checkService();
     if (!isRunning) {
-      eda.sys_Dialog.showInformationMessage(
-        `无法连接到 KiPIDA 服务 (${getServiceAddress()})\n请确保服务已启动`,
-        '连接失败'
-      );
       eda.sys_LoadingAndProgressBar.showProgressBar(100, 'pdn-analysis');
-      return;
+      const retrySuccess = await showServiceNotFoundDialog(api);
+      if (!retrySuccess) return;
+      eda.sys_LoadingAndProgressBar.showProgressBar(30, 'pdn-analysis');
     }
 
     const result = await api.analyze(kipidaData);

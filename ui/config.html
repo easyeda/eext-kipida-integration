@@ -68,6 +68,16 @@
   .picker-btns .btn-ok { background: #1a73e8; color: #fff; border-color: #1a73e8; }
   .picker-btns .btn-ok:hover { background: #1557b0; }
 
+  .picker-select-toggle { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 11px; color: #555; }
+  .picker-select-toggle button { padding: 2px 8px; font-size: 11px; border: 1px solid #bbb; border-radius: 3px; cursor: pointer; background: #fff; }
+  .picker-select-toggle button:hover { background: #e8e8e8; }
+  .picker-count { font-size: 11px; color: #1a73e8; font-weight: 600; }
+  .picker-check-list { max-height: 160px; overflow-y: auto; border: 1px solid #bbb; border-radius: 3px; background: #fff; margin-bottom: 8px; }
+  .picker-check-item { display: flex; align-items: center; gap: 6px; padding: 4px 8px; font-size: 12px; cursor: pointer; border-bottom: 1px solid #f0f0f0; }
+  .picker-check-item:last-child { border-bottom: none; }
+  .picker-check-item:hover { background: #f5f5f5; }
+  .picker-check-item input[type="checkbox"] { margin: 0; cursor: pointer; }
+
   .empty-hint { padding: 20px; text-align: center; color: #999; font-size: 12px; }
 </style>
 </head>
@@ -141,7 +151,11 @@
   <div class="picker-box">
     <h3 id="picker-title">选择器件</h3>
     <input type="text" id="picker-search" placeholder="搜索位号或器件名..." style="width:100%;padding:4px 6px;border:1px solid #bbb;border-radius:3px;font-size:12px;margin-bottom:6px" oninput="filterPicker()">
-    <select id="picker-select" size="6" style="height:120px" onchange="onPickerSelectChange()"></select>
+    <div class="picker-select-toggle" id="picker-select-toggle">
+      <button id="picker-toggle-btn" onclick="toggleSelectAll()">全选</button>
+      <span class="picker-count" id="picker-count"></span>
+    </div>
+    <div class="picker-check-list" id="picker-check-list"></div>
     <div class="current-row" id="picker-current-row" style="display:none">
       <label>电流 (A):</label>
       <input type="number" id="picker-current" value="1.0" min="0.001" step="0.1">
@@ -303,10 +317,8 @@
     if (mode === 'load') {
       document.getElementById('picker-current').value = row.current;
     }
+    document.getElementById('picker-select-toggle').style.display = 'none';
     renderPickerOptions(pickerComponents);
-    const select = document.getElementById('picker-select');
-    select.style.display = 'none';
-    select.selectedIndex = 0;
 
     // Show pads with current selection
     const fullComp = comp || pickerComponents[0];
@@ -375,38 +387,81 @@
     }
 
     document.getElementById('picker-search').value = '';
+    document.getElementById('picker-search').style.display = '';
     document.getElementById('picker-title').textContent = mode === 'source' ? '选择电压源器件' : '选择负载器件';
     document.getElementById('picker-current-row').style.display = mode === 'load' ? 'flex' : 'none';
     document.getElementById('picker-pads-section').style.display = 'none';
+    document.getElementById('picker-select-toggle').style.display = 'flex';
     renderPickerOptions(pickerComponents);
     document.getElementById('picker-overlay').classList.add('show');
   }
 
   function renderPickerOptions(comps) {
-    const select = document.getElementById('picker-select');
-    select.innerHTML = comps.map(c => {
-      const label = c.device_name ? `${c.ref_des} (${c.device_name}) (${c.node_ids.length}p)` : `${c.ref_des} (${c.node_ids.length}p)`;
-      return `<option value="${c.ref_des}">${label}</option>`;
+    const list = document.getElementById('picker-check-list');
+    const prevChecked = getCheckedRefDes();
+
+    list.innerHTML = comps.map(c => {
+      const label = c.device_name
+        ? `${c.ref_des} (${c.device_name}) (${c.node_ids.length}p)`
+        : `${c.ref_des} (${c.node_ids.length}p)`;
+      const checked = editingRowIdx >= 0
+        ? 'checked disabled'
+        : (prevChecked.has(c.ref_des) ? 'checked' : '');
+      return `<label class="picker-check-item">
+        <input type="checkbox" class="comp-check" data-ref="${c.ref_des}" ${checked} onchange="onCheckChange()">
+        ${label}
+      </label>`;
     }).join('');
-    // Reset pad section when options change
+
     document.getElementById('picker-pads-section').style.display = 'none';
+    updatePickerCount();
+    updatePadSectionForSelection();
   }
 
-  function onPickerSelectChange() {
-    const select = document.getElementById('picker-select');
-    const refDes = select.value;
-    if (!refDes) {
+  function getCheckedRefDes() {
+    const checked = new Set();
+    document.querySelectorAll('.comp-check:checked').forEach(cb => {
+      checked.add(cb.dataset.ref);
+    });
+    return checked;
+  }
+
+  function getCheckedComponents() {
+    const refSet = getCheckedRefDes();
+    return pickerComponents.filter(c => refSet.has(c.ref_des));
+  }
+
+  function toggleSelectAll() {
+    const allChecked = document.querySelectorAll('.comp-check').length > 0
+      && document.querySelectorAll('.comp-check:not(:checked):not(:disabled)').length === 0;
+    document.querySelectorAll('.comp-check').forEach(cb => { if (!cb.disabled) cb.checked = !allChecked; });
+    updatePickerCount();
+    updatePadSectionForSelection();
+  }
+
+  function updatePickerCount() {
+    const count = getCheckedRefDes().size;
+    const el = document.getElementById('picker-count');
+    el.textContent = count > 1 ? `${count} selected` : '';
+  }
+
+  function onCheckChange() {
+    updatePickerCount();
+    updatePadSectionForSelection();
+  }
+
+  function updatePadSectionForSelection() {
+    const checked = getCheckedComponents();
+    if (checked.length === 1) {
+      const comp = checked[0];
+      if (comp.node_ids.length > 0) {
+        renderPadsList(comp);
+      } else {
+        document.getElementById('picker-pads-section').style.display = 'none';
+      }
+    } else {
       document.getElementById('picker-pads-section').style.display = 'none';
-      return;
     }
-    const net = allNets[selectedNetIdx];
-    const comp = pickerComponents.find(c => c.ref_des === refDes)
-      || (net.components || []).find(c => c.ref_des === refDes);
-    if (!comp || !comp.node_ids.length) {
-      document.getElementById('picker-pads-section').style.display = 'none';
-      return;
-    }
-    renderPadsList(comp);
   }
 
   function renderPadsList(comp, selectedNodeIds) {
@@ -458,25 +513,22 @@
   function closePicker() {
     document.getElementById('picker-overlay').classList.remove('show');
     document.getElementById('picker-search').style.display = '';
-    document.getElementById('picker-select').style.display = '';
     document.getElementById('picker-pads-section').style.display = 'none';
+    document.getElementById('picker-select-toggle').style.display = 'flex';
     editingRowIdx = -1;
+    document.getElementById('picker-check-list').innerHTML = '';
   }
 
   function confirmPicker() {
-    const select = document.getElementById('picker-select');
-    const refDes = select.value;
-    if (!refDes) return;
+    const checkedComps = getCheckedComponents();
+    if (!checkedComps.length) return;
 
     const net = allNets[selectedNetIdx];
-    const comp = pickerComponents.find(c => c.ref_des === refDes)
-      || (net.components || []).find(c => c.ref_des === refDes);
-    if (!comp) return;
-
-    const selectedNodes = getSelectedNodeIds(comp);
     const cfg = railConfig[net.net];
 
     if (editingRowIdx >= 0) {
+      const comp = checkedComps[0];
+      const selectedNodes = getSelectedNodeIds(comp);
       const row = cfg.rows[editingRowIdx];
       if (row.role === 'LOAD') {
         row.current = parseFloat(document.getElementById('picker-current').value) || 1.0;
@@ -484,11 +536,15 @@
       row.node_ids = selectedNodes;
       editingRowIdx = -1;
     } else {
-      if (pickerMode === 'source') {
-        cfg.rows.push({ role: 'SOURCE', ref_des: refDes, node_ids: selectedNodes, current: 0 });
-      } else {
-        const current = parseFloat(document.getElementById('picker-current').value) || 1.0;
-        cfg.rows.push({ role: 'LOAD', ref_des: refDes, node_ids: selectedNodes, current });
+      const isSingle = checkedComps.length === 1;
+      for (const comp of checkedComps) {
+        const selectedNodes = isSingle ? getSelectedNodeIds(comp) : comp.node_ids;
+        if (pickerMode === 'source') {
+          cfg.rows.push({ role: 'SOURCE', ref_des: comp.ref_des, node_ids: selectedNodes, current: 0 });
+        } else {
+          const current = parseFloat(document.getElementById('picker-current').value) || 1.0;
+          cfg.rows.push({ role: 'LOAD', ref_des: comp.ref_des, node_ids: selectedNodes, current });
+        }
       }
       selectedRowIdx = cfg.rows.length - 1;
     }
@@ -513,21 +569,22 @@
     if (!available.length) { alert('所有网络已添加'); return; }
 
     const select = document.createElement('select');
-    select.style.cssText = 'width:100%;padding:4px;margin-bottom:8px;border:1px solid #bbb;border-radius:3px;font-size:12px';
+    select.id = 'picker-manual-net-select';
+    select.style.cssText = 'width:100%;padding:5px;border:1px solid #bbb;border-radius:3px;font-size:12px;margin-bottom:8px';
     available.forEach(n => {
       const opt = document.createElement('option');
       opt.value = n; opt.textContent = n;
       select.appendChild(opt);
     });
 
-    // Reuse picker overlay as a simple net selector
-    const box = document.querySelector('.picker-box');
     document.getElementById('picker-title').textContent = '选择要添加的网络';
-    document.getElementById('picker-select').replaceWith(select);
+    document.getElementById('picker-check-list').innerHTML = '';
+    document.getElementById('picker-check-list').appendChild(select);
+    document.getElementById('picker-select-toggle').style.display = 'none';
+    document.getElementById('picker-search').style.display = 'none';
     document.getElementById('picker-current-row').style.display = 'none';
     document.getElementById('picker-overlay').classList.add('show');
 
-    // Override confirm button temporarily
     const btnOk = document.querySelector('.picker-btns .btn-ok');
     const origOnclick = btnOk.onclick;
     btnOk.onclick = () => {
@@ -538,12 +595,6 @@
         renderNetList();
         selectNet(allNets.length - 1);
       }
-      // Restore original picker select element
-      const newSelect = document.createElement('select');
-      newSelect.id = 'picker-select';
-      newSelect.size = 6;
-      newSelect.style.height = '120px';
-      select.replaceWith(newSelect);
       btnOk.onclick = origOnclick;
       closePicker();
     };

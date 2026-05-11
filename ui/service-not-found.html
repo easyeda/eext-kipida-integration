@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KiPIDA Service</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; overflow: hidden; }
+body {
+  font-family: 'Segoe UI', 'Microsoft YaHei', -apple-system, sans-serif;
+  font-size: 13px;
+  background: #F5F5F5;
+  color: #333;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.icon { font-size: 40px; margin-bottom: 12px; }
+.title { font-size: 16px; font-weight: 600; margin-bottom: 8px; color: #222; }
+.desc { color: #666; text-align: center; line-height: 1.6; margin-bottom: 12px; max-width: 400px; }
+.steps { color: #555; text-align: left; line-height: 2.0; margin-bottom: 16px; max-width: 400px; font-size: 12px; }
+.section-title { font-size: 12px; color: #999; margin-bottom: 8px; }
+.btn-group { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; justify-content: center; }
+.btn {
+  padding: 7px 16px;
+  font-size: 12px;
+  border: 1px solid #D0D0D0;
+  border-radius: 4px;
+  background: #FFF;
+  color: #333;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn:hover { background: #F0F0F0; border-color: #007AFF; color: #007AFF; }
+.btn-download {
+  background: #34C759;
+  border-color: #34C759;
+  color: #FFF;
+  padding: 8px 24px;
+  font-size: 13px;
+}
+.btn-download:hover { background: #2DB84D; border-color: #2DB84D; color: #FFF; }
+.btn-python {
+  background: #3776AB;
+  border-color: #3776AB;
+  color: #FFF;
+  padding: 8px 20px;
+  font-size: 13px;
+}
+.btn-python:hover { background: #2D5F8A; border-color: #2D5F8A; color: #FFF; }
+.btn-primary {
+  background: #007AFF;
+  border-color: #007AFF;
+  color: #FFF;
+  padding: 8px 28px;
+  font-size: 13px;
+  border-radius: 4px;
+}
+.btn-primary:hover { background: #0066DD; border-color: #0066DD; color: #FFF; }
+.divider { width: 100%; max-width: 400px; border-top: 1px solid #E0E0E0; margin: 12px 0; }
+</style>
+</head>
+<body>
+<div class="icon">⚠️</div>
+<div class="title" id="titleText"></div>
+<div class="desc" id="descText"></div>
+<div class="steps" id="stepsText"></div>
+
+<div class="btn-group">
+  <button class="btn btn-python" onclick="openPython()" id="btnPython"></button>
+  <button class="btn btn-download" onclick="openKiPIDA()" id="btnKiPIDA"></button>
+</div>
+
+<div class="divider"></div>
+<div class="section-title" id="scriptTitle"></div>
+<div class="btn-group">
+  <button class="btn" onclick="openRepo()" id="btnRepo"></button>
+</div>
+
+<div style="margin-top: 16px;">
+  <button class="btn btn-primary" onclick="retry()" id="btnRetry"></button>
+</div>
+
+<script>
+(function() {
+  'use strict';
+  var i18n = {
+    zh: {
+      title: 'KiPIDA 服务未启动',
+      desc: '请按以下步骤配置并启动 KiPIDA 分析服务：',
+      steps: '1. 安装 Python 3.10+（如已安装可跳过）\n2. 从 GitHub 获取 kipida-service 文件夹\n3. 运行 kipida-service/start.bat（自动下载核心文件）\n4. 服务启动后点击"重新检测"',
+      btn_python: '安装 Python',
+      btn_kipida: 'KiPIDA 原项目',
+      script_title: '获取 kipida-service（含启动脚本）：',
+      btn_repo: '打开项目仓库',
+      btn_retry: '重新检测'
+    },
+    en: {
+      title: 'KiPIDA Service Not Running',
+      desc: 'Please follow these steps to configure and start the KiPIDA analysis service:',
+      steps: '1. Install Python 3.10+ (skip if already installed)\n2. Get the kipida-service folder from GitHub\n3. Run kipida-service/start.bat (auto-downloads core files)\n4. Click "Retry" after the service starts',
+      btn_python: 'Install Python',
+      btn_kipida: 'KiPIDA Project',
+      script_title: 'Get kipida-service (includes startup script):',
+      btn_repo: 'Open Project Repo',
+      btn_retry: 'Retry'
+    }
+  };
+
+  var lang = 'zh';
+  var T = i18n[lang];
+
+  function applyI18n() {
+    document.getElementById('titleText').textContent = T.title;
+    document.getElementById('descText').textContent = T.desc;
+    document.getElementById('stepsText').innerText = T.steps;
+    document.getElementById('btnPython').textContent = T.btn_python;
+    document.getElementById('btnKiPIDA').textContent = T.btn_kipida;
+    document.getElementById('scriptTitle').textContent = T.script_title;
+    document.getElementById('btnRepo').textContent = T.btn_repo;
+    document.getElementById('btnRetry').textContent = T.btn_retry;
+    document.title = T.title;
+  }
+
+  applyI18n();
+
+  function getEda() {
+    try {
+      if (window.parent && window.parent.eda) return window.parent.eda;
+      if (window.top && window.top.eda) return window.top.eda;
+      if (window.eda) return window.eda;
+    } catch (e) {}
+    return null;
+  }
+
+  (function detectLang() {
+    var retries = 0;
+    function tryDetect() {
+      var eda = getEda();
+      if (eda && eda.sys_I18n) {
+        eda.sys_I18n.getCurrentLanguage().then(function(edaLang) {
+          if (edaLang && edaLang.indexOf('zh') === -1) {
+            lang = 'en';
+            T = i18n[lang];
+            applyI18n();
+          }
+        }).catch(function() {});
+      } else if (++retries < 20) {
+        setTimeout(tryDetect, 200);
+      }
+    }
+    tryDetect();
+  })();
+
+  window.openPython = function() {
+    var eda = getEda();
+    if (eda && eda.sys_Window) {
+      eda.sys_Window.open('https://www.python.org/downloads/');
+    }
+  };
+
+  window.openKiPIDA = function() {
+    var eda = getEda();
+    if (eda && eda.sys_Window) {
+      eda.sys_Window.open('https://github.com/kbralten/KiPIDA');
+    }
+  };
+
+  window.openRepo = function() {
+    var eda = getEda();
+    if (eda && eda.sys_Window) {
+      eda.sys_Window.open('https://github.com/easyeda/eext-kipida-integration');
+    }
+  };
+
+  window.retry = function() {
+    var eda = getEda();
+    if (eda && eda.sys_MessageBus) {
+      eda.sys_MessageBus.publish('kipida-service-dialog', { type: 'retry' });
+    }
+  };
+})();
+</script>
+</body>
+</html>

@@ -47,29 +47,34 @@ After clicking **Run Simulation**, the results window pops up automatically:
 |------------|-------------|
 | EasyEDA Professional ≥ 2.3.0 | Plugin runtime environment |
 | Python 3.10+ | Run kipida-service |
-| Git | Pull KiPIDA submodule |
 
-### 1. Get kipida-service
+### 1. Install EasyEDA Extension
 
-Clone from the GitHub repository (use `--recursive` to pull the KiPIDA submodule):
+In EasyEDA Professional: **Advanced → Extension Manager → Import Extension**, select `build/dist/kipida-bridge_v1.0.0.eext`.
+
+You can also search and install directly through EasyEDA Extension Store.
+
+### 2. Get kipida-service
+
+Download the `kipida-service` folder from the GitHub repository:
 
 ```bash
-git clone --recursive https://github.com/easyeda/eext-kipida-integration.git
+git clone https://github.com/easyeda/eext-kipida-integration.git
 ```
 
-If already cloned without initializing the submodule:
+Only the `kipida-service/` directory is needed.
 
-```bash
-git submodule update --init --recursive
-```
+### 3. Start Python Service
 
-Only the `kipida-service/` directory is needed. The KiPIDA core algorithms (`mesh.py`, `solver.py`) are referenced via git submodule from the original project [kbralten/KiPIDA](https://github.com/kbralten/KiPIDA), located at `kipida-service/KiPIDA/`.
+Double-click `kipida-service/start.bat`. The script will automatically:
 
-### 2. Start Python Service
+1. Download KiPIDA core algorithm files (`mesh.py`, `solver.py`) from GitHub
+2. Install Python dependencies (fastapi, numpy, scipy, etc.)
+3. Start the service (default port 5000)
 
-Double-click `kipida-service/start.bat`. The script will automatically initialize the submodule, install dependencies, and start the service.
+Internet connection is required for the first launch; subsequent launches can work offline.
 
-You can also start manually:
+To start manually:
 
 ```bash
 cd kipida-service
@@ -78,12 +83,6 @@ python -m uvicorn main:app --reload --port 5000
 ```
 
 After the service starts, visit http://localhost:5000/docs to view the API documentation.
-
-### 3. Install EasyEDA Extension
-
-In EasyEDA Professional: **Advanced → Extension Manager → Import Extension**, select `build/dist/kipida-bridge_v1.0.0.eext`.
-
-You can also search and install directly through EasyEDA Extension Store.
 
 ---
 
@@ -102,7 +101,6 @@ eext-kipida-integration/
 │   ├── config.html         # Configuration panel
 │   └── results.html        # Results display panel
 ├── kipida-service/
-│   ├── KiPIDA/             # git submodule → github.com/kbralten/KiPIDA
 │   ├── main.py             # FastAPI service (calls KiPIDA solver)
 │   ├── start.bat           # One-click startup script
 │   └── requirements.txt
@@ -125,17 +123,14 @@ Build output goes to `build/dist/kipida-bridge_v1.0.0.eext`.
 
 ## Notes
 
-- KiPIDA core algorithms are referenced via git submodule from [kbralten/KiPIDA](https://github.com/kbralten/KiPIDA) — **no modification needed**
+- KiPIDA core algorithms (`mesh.py`, `solver.py`) are from [kbralten/KiPIDA](https://github.com/kbralten/KiPIDA) — automatically downloaded on first launch
+- Use the `KIPIDA_PATH` environment variable to specify a custom KiPIDA location; `start.bat` defaults to `kipida-service/KiPIDA/`
 - Python service must be started before running analysis, default port is 5000
 - Service address can be modified in extension menu **PDN Analysis → Configure Service Address**
 - Smaller `mesh_resolution` means higher precision but significantly longer analysis time (recommended: 0.2~0.5mm)
 
 ## Updating KiPIDA
 
-When the upstream KiPIDA project has updates, run the following to sync:
+Delete `kipida-service/KiPIDA/mesh.py` and `solver.py`, then re-run `start.bat` to download the latest versions. Or manually download from:
 
-```bash
-git submodule update --remote kipida-service/KiPIDA
-git add kipida-service/KiPIDA
-git commit -m "chore: update KiPIDA submodule"
-```
+**Source**: [https://github.com/kbralten/KiPIDA](https://github.com/kbralten/KiPIDA)

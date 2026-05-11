@@ -1,3 +1,0 @@
-[submodule "kipida-service/KiPIDA"]
-	path = kipida-service/KiPIDA
-	url = https://github.com/kbralten/KiPIDA.git

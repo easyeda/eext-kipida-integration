@@ -8,6 +8,7 @@ kipida-service/__pycache__/
 kipida-service/output/
 kipida-service/last_input.json
 kipida-service/compare_*.py
+kipida-service/KiPIDA/
 *.pyc
 build_output.txt
 

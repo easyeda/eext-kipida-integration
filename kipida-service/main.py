@@ -11,8 +11,17 @@ import os
 import time
 import traceback
 
-# KiPIDA 核心算法通过 git submodule 引入
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'KiPIDA'))
+# KiPIDA 核心算法路径，通过环境变量 KIPIDA_PATH 指定
+KIPIDA_PATH = os.environ.get('KIPIDA_PATH', '')
+if not KIPIDA_PATH:
+    print("[KiPIDA] ERROR: 环境变量 KIPIDA_PATH 未设置")
+    print("[KiPIDA] 请设置 KIPIDA_PATH 指向包含 mesh.py 和 solver.py 的目录")
+    print("[KiPIDA] 例如: set KIPIDA_PATH=C:\\path\\to\\KiPIDA")
+    sys.exit(1)
+if not os.path.isdir(KIPIDA_PATH):
+    print(f"[KiPIDA] ERROR: KIPIDA_PATH 路径不存在: {KIPIDA_PATH}")
+    sys.exit(1)
+sys.path.insert(0, KIPIDA_PATH)
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
