@@ -8,6 +8,7 @@ import { Kipida_PcbData, Kipida_AnalysisResult } from './types';
 export interface ApiConfig {
   analyzeEndpoint: string;
   testEndpoint: string;
+  plotsEndpoint: string;
 }
 
 export class KipidaApiClient {
@@ -37,9 +38,10 @@ export class KipidaApiClient {
   /**
    * 发送分析请求
    */
-  async analyze(data: Kipida_PcbData): Promise<Kipida_AnalysisResult> {
+  async analyze(data: Kipida_PcbData, skipPlots: boolean = false): Promise<Kipida_AnalysisResult> {
     try {
-      const url = `http://${this.host}:${this.port}${this.config.analyzeEndpoint}`;
+      const params = skipPlots ? '?skip_plots=true' : '';
+      const url = `http://${this.host}:${this.port}${this.config.analyzeEndpoint}${params}`;
 
       console.log('[KipidaApiClient] 发送请求到:', url);
       console.log('[KipidaApiClient] 请求数据:', JSON.stringify(data));
@@ -67,6 +69,30 @@ export class KipidaApiClient {
         success: false,
         message: `连接失败: ${error}`,
       };
+    }
+  }
+
+  /**
+   * 请求生成可视化图片（基于上次求解结果）
+   */
+  async fetchPlots(): Promise<Kipida_AnalysisResult> {
+    try {
+      const url = `http://${this.host}:${this.port}${this.config.plotsEndpoint}`;
+      console.log('[KipidaApiClient] 请求图片生成:', url);
+
+      const response = await eda.sys_ClientUrl.request(url, 'POST', '{}', {
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        return { success: false, message: `HTTP 错误: ${response.status} - ${errorText}` };
+      }
+
+      const result = await response.json();
+      return result as Kipida_AnalysisResult;
+    } catch (error) {
+      return { success: false, message: `连接失败: ${error}` };
     }
   }
 

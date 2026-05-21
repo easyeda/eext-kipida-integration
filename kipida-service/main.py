@@ -10,6 +10,9 @@ import sys
 import os
 import time
 import traceback
+import hashlib
+import json as _json
+from concurrent.futures import ThreadPoolExecutor
 
 # KiPIDA 核心算法路径，通过环境变量 KIPIDA_PATH 指定
 KIPIDA_PATH = os.environ.get('KIPIDA_PATH', '')
@@ -25,6 +28,7 @@ sys.path.insert(0, KIPIDA_PATH)
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Dict
 
@@ -140,6 +144,8 @@ app = FastAPI(
     version="2.0.0"
 )
 
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -153,6 +159,30 @@ analysis_state = {
     "last_result": None,
     "total_requests": 0
 }
+
+# 结果缓存：最近 5 次分析
+_cache: Dict[str, dict] = {}
+_cache_order: List[str] = []
+_CACHE_MAX = 5
+
+
+def _compute_cache_key(data: 'KipidaInput') -> str:
+    raw = _json.dumps(data.model_dump(), sort_keys=True, ensure_ascii=False)
+    return hashlib.md5(raw.encode()).hexdigest()
+
+
+def _cache_get(key: str):
+    return _cache.get(key)
+
+
+def _cache_put(key: str, value: dict):
+    if key in _cache:
+        return
+    _cache[key] = value
+    _cache_order.append(key)
+    while len(_cache_order) > _CACHE_MAX:
+        old = _cache_order.pop(0)
+        _cache.pop(old, None)
 
 
 # ============================================================
@@ -847,7 +877,7 @@ def generate_plot_images(mesh_points: list, mesh_resolution: float = 0.5, all_la
 
     def fig_to_b64(fig, filename: str = None) -> str:
         buf = io.BytesIO()
-        fig.savefig(buf, format='png', dpi=100)
+        fig.savefig(buf, format='png', dpi=72, pil_kwargs={'compress_level': 9})
         if filename:
             safe_name = filename.replace('/', '_').replace('\\', '_')
             out_path = os.path.join(OUTPUT_DIR, safe_name)
@@ -913,12 +943,11 @@ def generate_plot_images(mesh_points: list, mesh_resolution: float = 0.5, all_la
         h_mm = pad_h * MIL_TO_MM
         net_points.setdefault(net, []).append((x_mm, y_mm, layer, voltage, node_type, w_mm, h_mm))
 
-    result = {}
-    for net, points in net_points.items():
+    def _render_net(net, points):
+        """Render all plots for a single net. Thread-safe with Agg backend."""
         if not points:
-            continue
+            return net, None
 
-        # 过滤掉 layer=0，保留 layer=-1（via 哨兵值）和正常层
         valid_points = [p for p in points if p[2] != 0]
         if not valid_points:
             valid_points = points
@@ -927,7 +956,6 @@ def generate_plot_images(mesh_points: list, mesh_resolution: float = 0.5, all_la
         ys = [p[1] for p in valid_points]
         vs = [p[3] for p in valid_points]
 
-        # 使用固定色阶（基于最大压降），与 KIPIDA 保持一致
         if net in net_scale:
             vmin, vmax = net_scale[net]
         else:
@@ -935,13 +963,11 @@ def generate_plot_images(mesh_points: list, mesh_resolution: float = 0.5, all_la
             if abs(vmax - vmin) < 1e-9:
                 vmin -= 0.001; vmax += 0.001
 
-        # 实际压降（用于标题显示）
         actual_drop = next((r.max_drop for r in net_results if r.net == net), vmax - vmin)
 
         net_img = NetPlotImages()
 
-        # ── 3D 散点图（快速，表达层分布与电压分布）─────────────
-        # 几何精度（走线宽度/焊盘/过孔尺寸）在 2D 层图中体现
+        # ── 3D 散点图 ─────────────────────────────────────────
         all_layer_ids = sorted(set(p[2] for p in valid_points if p[2] != -1))
         all_layer_pts_3d = [p for p in valid_points if p[2] == -1]
         layer_to_z = {lid: float(len(all_layer_ids) - i) for i, lid in enumerate(all_layer_ids)}
@@ -949,11 +975,16 @@ def generate_plot_images(mesh_points: list, mesh_resolution: float = 0.5, all_la
         fig = plt.figure(figsize=(8, 6), constrained_layout=True)
         ax = fig.add_subplot(111, projection='3d')
 
+        import numpy as _np3d
         for layer_id in all_layer_ids:
             z = layer_to_z[layer_id]
             layer_pts = [p for p in valid_points if p[2] == layer_id] + all_layer_pts_3d
             if not layer_pts:
                 continue
+            if len(layer_pts) > 50000:
+                rng = _np3d.random.default_rng(42)
+                indices = rng.choice(len(layer_pts), 50000, replace=False)
+                layer_pts = [layer_pts[i] for i in indices]
             lxs = [p[0] for p in layer_pts]
             lys = [p[1] for p in layer_pts]
             lvs = [p[3] for p in layer_pts]
@@ -971,11 +1002,6 @@ def generate_plot_images(mesh_points: list, mesh_resolution: float = 0.5, all_la
         net_img.view_3d = fig_to_b64(fig, f"{net}_3d.png")
 
         # ── 各层 2D 图 ────────────────────────────────────────
-        # via 节点 (layer=-1)：出现在所有层
-        # pad 节点 (layer>0)：只出现在自己所属的层
-        # junction/插值节点 (layer>0)：只出现在自己所属的层
-        # 绘制范围：all_layers（含只有过孔的层）
-        # layer=-1 means spans all layers (via or through-hole pad)
         from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
         all_layer_pts = [p for p in valid_points if p[2] == -1]
@@ -990,7 +1016,6 @@ def generate_plot_images(mesh_points: list, mesh_resolution: float = 0.5, all_la
 
             fig2, ax2 = plt.subplots(figsize=(7, 5), constrained_layout=True)
 
-            # ── 走线（数据坐标填充矩形，按实际宽度）────────────────
             segs = track_segs.get(net, {}).get(layer_id, [])
             if segs:
                 import numpy as np
@@ -1009,11 +1034,9 @@ def generate_plot_images(mesh_points: list, mesh_resolution: float = 0.5, all_la
                             (x1 - px * hw, y1 - py * hw),
                         ]
                         ax2.add_patch(plt.Polygon(corners, facecolor=color, edgecolor='none', zorder=1))
-                    # 圆形端帽：填充转折处三角缺口
                     ax2.add_patch(Circle((x1, y1), hw, facecolor=color, edgecolor='none', zorder=1))
                     ax2.add_patch(Circle((x2, y2), hw, facecolor=color, edgecolor='none', zorder=1))
 
-            # ── 焊盘（Rectangle）和过孔（Circle）────────────────
             def _is_rect_pad(p):
                 return p[4] == 'pad' and len(p) > 6 and p[5] > 0 and p[6] > 0
 
@@ -1055,7 +1078,23 @@ def generate_plot_images(mesh_points: list, mesh_resolution: float = 0.5, all_la
             ax2.autoscale_view()
             net_img.layers[str(layer_id)] = fig_to_b64(fig2, f"{net}_layer{layer_id}.png")
 
-        result[net] = net_img
+        return net, net_img
+
+    # 并行渲染各网络的图片
+    result = {}
+    nets_to_render = [(net, pts) for net, pts in net_points.items() if pts]
+    if len(nets_to_render) <= 1:
+        for net, pts in nets_to_render:
+            net, img = _render_net(net, pts)
+            if img:
+                result[net] = img
+    else:
+        with ThreadPoolExecutor(max_workers=min(4, len(nets_to_render))) as executor:
+            futures = [executor.submit(_render_net, net, pts) for net, pts in nets_to_render]
+            for f in futures:
+                net, img = f.result()
+                if img:
+                    result[net] = img
 
     return result
 
@@ -1123,12 +1162,11 @@ async def test_connection():
 
 
 @app.post("/analyze", response_model=AnalysisOutput)
-async def analyze_pcb(data: KipidaInput):
+async def analyze_pcb(data: KipidaInput, skip_plots: bool = False):
     try:
         analysis_state["total_requests"] += 1
         analysis_state["last_input"] = data.model_dump()
 
-        import json as _json
         input_path = os.path.join(os.path.dirname(__file__), 'last_input.json')
         with open(input_path, 'w', encoding='utf-8') as f:
             _json.dump(data.model_dump(), f, ensure_ascii=False, indent=2)
@@ -1138,22 +1176,49 @@ async def analyze_pcb(data: KipidaInput):
 
         start_time = time.time()
 
+        # 检查缓存
+        cache_key = _compute_cache_key(data)
+        cached = _cache_get(cache_key)
+        if cached:
+            print(f"[KiPIDA] 命中缓存 key={cache_key[:8]}...")
+            if skip_plots and cached.get("results"):
+                cached_copy = dict(cached)
+                cached_copy["results"] = dict(cached_copy["results"])
+                cached_copy["results"]["plot_images"] = {}
+                cached_copy["message"] = f"分析完成（缓存）。耗时 {time.time()-start_time:.3f}s"
+                return AnalysisOutput(**cached_copy)
+            cached["message"] = f"分析完成（缓存）。耗时 {time.time()-start_time:.3f}s"
+            return AnalysisOutput(**cached)
+
         voltages, mesh_points = build_mesh_and_solve(data)
 
         if not voltages:
             return AnalysisOutput(success=False, message="求解器返回空结果，请检查电路连通性")
 
-        # 过滤 NaN/Inf 结果
         import math
         voltages = {k: v for k, v in voltages.items() if math.isfinite(v)}
 
         net_results = compute_net_results(data, voltages)
-        # 收集所有铜箔层 ID（走线 + 铺铜层）
         all_layers = sorted(
             set(r.layer for r in data.resistances if r.layer is not None and r.layer > 0)
             | set(p.layer for p in data.copper_pours if p.layer is not None and p.layer > 0)
         )
-        plot_images = generate_plot_images(mesh_points, data.mesh_resolution or 0.5, all_layers, net_results, data.max_drop_pct or 5.0, data.resistances, voltages, data.nodes)
+
+        solve_time = time.time() - start_time
+        print(f"[KiPIDA] 求解耗时: {solve_time:.3f}s")
+
+        # 保存求解结果用于后续 /plots 请求
+        analysis_state["last_mesh_points"] = mesh_points
+        analysis_state["last_all_layers"] = all_layers
+        analysis_state["last_net_results"] = net_results
+        analysis_state["last_data"] = data
+        analysis_state["last_voltages"] = voltages
+
+        plot_images = {}
+        if not skip_plots:
+            plot_start = time.time()
+            plot_images = generate_plot_images(mesh_points, data.mesh_resolution or 0.5, all_layers, net_results, data.max_drop_pct or 5.0, data.resistances, voltages, data.nodes)
+            print(f"[KiPIDA] 可视化耗时: {time.time()-plot_start:.3f}s")
 
         overall_max_drop = max((r.max_drop for r in net_results), default=0.0)
         total_current = sum(l.current for l in data.loads)
@@ -1171,6 +1236,10 @@ async def analyze_pcb(data: KipidaInput):
             results=results,
         )
 
+        # 缓存完整结果（含图片）
+        if not skip_plots:
+            _cache_put(cache_key, output.model_dump())
+
         analysis_state["last_result"] = output.model_dump()
         print(f"[KiPIDA] 分析完成: 最大压降={overall_max_drop:.6f}V, 耗时={time.time()-start_time:.3f}s")
         return output
@@ -1179,6 +1248,50 @@ async def analyze_pcb(data: KipidaInput):
         tb = traceback.format_exc()
         print(f"[KiPIDA] 分析错误: {tb}")
         return AnalysisOutput(success=False, message=f"分析失败: {str(e)}\n{tb}")
+
+
+@app.post("/plots", response_model=AnalysisOutput)
+async def generate_plots():
+    """基于上次求解结果按需生成可视化图片。"""
+    try:
+        mesh_points = analysis_state.get("last_mesh_points")
+        if mesh_points is None:
+            return AnalysisOutput(success=False, message="没有可用的求解结果，请先调用 /analyze")
+
+        start_time = time.time()
+        all_layers = analysis_state["last_all_layers"]
+        net_results = analysis_state["last_net_results"]
+        data = analysis_state["last_data"]
+        voltages = analysis_state["last_voltages"]
+
+        plot_images = generate_plot_images(
+            mesh_points, data.mesh_resolution or 0.5, all_layers,
+            net_results, data.max_drop_pct or 5.0,
+            data.resistances, voltages, data.nodes
+        )
+
+        overall_max_drop = max((r.max_drop for r in net_results), default=0.0)
+        total_current = sum(l.current for l in data.loads)
+
+        results = AnalysisResults(
+            max_drop=round(overall_max_drop, 6),
+            avg_current=round(total_current, 6),
+            net_results=net_results,
+            plot_images=plot_images,
+        )
+
+        output = AnalysisOutput(
+            success=True,
+            message=f"图片生成完成。耗时 {time.time()-start_time:.3f}s",
+            results=results,
+        )
+        analysis_state["last_result"] = output.model_dump()
+        return output
+
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f"[KiPIDA] 图片生成错误: {tb}")
+        return AnalysisOutput(success=False, message=f"图片生成失败: {str(e)}\n{tb}")
 
 
 @app.get("/status")

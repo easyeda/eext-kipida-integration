@@ -10,6 +10,7 @@ const CONFIG = {
   port: 5000,
   analyzeEndpoint: '/analyze',
   testEndpoint: '/test',
+  plotsEndpoint: '/plots',
 };
 
 function getServiceAddress(): string {
@@ -168,7 +169,7 @@ async function showConfigPanel(netInfos: NetInfo[], allNetNames: string[], allNe
 
     eda.sys_IFrame.openIFrame('/ui/config.html', 1000, 600, 'kipida-config', {
       maximizeButton: false,
-      minimizeButton: false,
+      minimizeButton: true,
       buttonCallbackFn: (btn) => {
         if (btn === 'close' && !resolved) {
           resolved = true;
@@ -239,6 +240,7 @@ export async function runIRDropAnalysis(): Promise<void> {
     const api = new KipidaApiClient(CONFIG.host, CONFIG.port, {
       analyzeEndpoint: CONFIG.analyzeEndpoint,
       testEndpoint: CONFIG.testEndpoint,
+      plotsEndpoint: CONFIG.plotsEndpoint,
     });
 
     const isRunning = await api.checkService();

@@ -58,7 +58,7 @@
   /* Picker overlay */
   .picker-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.3); z-index: 100; align-items: center; justify-content: center; }
   .picker-overlay.show { display: flex; }
-  .picker-box { background: #fff; border-radius: 6px; padding: 16px; min-width: 280px; box-shadow: 0 4px 20px rgba(0,0,0,0.2); }
+  .picker-box { background: #fff; border-radius: 6px; padding: 16px; min-width: 480px; box-shadow: 0 4px 20px rgba(0,0,0,0.2); }
   .picker-box h3 { font-size: 13px; margin-bottom: 10px; }
   .picker-box select { width: 100%; padding: 5px; border: 1px solid #bbb; border-radius: 3px; font-size: 12px; margin-bottom: 8px; }
   .picker-box .current-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 12px; }
@@ -72,7 +72,7 @@
   .picker-select-toggle button { padding: 2px 8px; font-size: 11px; border: 1px solid #bbb; border-radius: 3px; cursor: pointer; background: #fff; }
   .picker-select-toggle button:hover { background: #e8e8e8; }
   .picker-count { font-size: 11px; color: #1a73e8; font-weight: 600; }
-  .picker-check-list { max-height: 160px; overflow-y: auto; border: 1px solid #bbb; border-radius: 3px; background: #fff; margin-bottom: 8px; }
+  .picker-check-list { max-height: 220px; overflow-y: auto; border: 1px solid #bbb; border-radius: 3px; background: #fff; margin-bottom: 8px; }
   .picker-check-item { display: flex; align-items: center; gap: 6px; padding: 4px 8px; font-size: 12px; cursor: pointer; border-bottom: 1px solid #f0f0f0; }
   .picker-check-item:last-child { border-bottom: none; }
   .picker-check-item:hover { background: #f5f5f5; }
@@ -87,6 +87,9 @@
   <!-- Left: net list -->
   <div class="left">
     <div class="left-title">Detected Power Rails</div>
+    <div style="padding:4px 6px;border-bottom:1px solid #ddd">
+      <input type="text" id="net-search" placeholder="搜索网络..." oninput="filterNetList()" style="width:100%;padding:3px 6px;border:1px solid #bbb;border-radius:3px;font-size:11px">
+    </div>
     <div class="net-list" id="net-list"></div>
     <div class="left-footer">
       <button class="btn-add-net" onclick="addManualNet()">Add Manual Net</button>
@@ -233,16 +236,22 @@
   }
 
   // ── Net list ──────────────────────────────────────────────
+  function filterNetList() {
+    renderNetList();
+  }
+
   function renderNetList() {
     const el = document.getElementById('net-list');
     if (!allNets || !allNets.length) {
       el.innerHTML = '<div class="empty-hint">未检测到电源网络</div>';
       return;
     }
+    const query = (document.getElementById('net-search').value || '').toLowerCase();
     el.innerHTML = allNets.map((net, i) => {
       const cfg = railConfig[net.net] || { voltage: 0 };
       const comps = net.components || [];
       const label = `${net.net} (${cfg.voltage}V) · ${comps.length} 器件`;
+      if (query && !net.net.toLowerCase().includes(query)) return '';
       return `<div class="net-item${i === selectedNetIdx ? ' selected' : ''}" onclick="selectNet(${i})">${label}</div>`;
     }).join('');
   }
@@ -476,7 +485,7 @@
       const checked = allSelected || (selectedNodeIds && selectedNodeIds.includes(nid));
       const disabled = allSelected ? 'disabled' : '';
       return `<label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer">
-        <input type="checkbox" class="pad-check" data-nid="${nid}" ${checked ? 'checked' : ''} ${disabled}> ${padNum}
+        <input type="checkbox" class="pad-check" data-nid="${nid}" ${checked ? 'checked' : ''} ${disabled}> 引脚${padNum}
       </label>`;
     }).join('');
   }
