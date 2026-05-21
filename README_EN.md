@@ -4,6 +4,27 @@ A bridge extension that connects [KiPIDA](https://github.com/kbralten/KiPIDA) PD
 
 **Repository**: [https://github.com/easyeda/eext-kipida-integration](https://github.com/easyeda/eext-kipida-integration)
 
+## What is PDN Simulation?
+
+### Terminology
+
+| Abbreviation | Full Name | Description |
+|--------------|-----------|-------------|
+| PDN | Power Distribution Network | The complete power delivery path on a PCB from the power source to the IC, including power planes, traces, vias, decoupling capacitors, etc. |
+| IR Drop | Voltage Drop (I×R) | The voltage loss caused by current (I) flowing through conductor resistance (R) |
+
+### Why Do You Need PDN Simulation?
+
+In PCB design, power travels from the VRM (Voltage Regulator Module) to chip pins through copper traces, vias, and pads. Although these conductors have very low resistance, when load currents are high, the accumulated voltage drop (IR Drop) can cause the actual supply voltage at the chip to fall below its minimum operating voltage — leading to logic errors, timing violations, or even failure to start.
+
+PDN simulation meshes the PCB copper geometry and calculates the voltage distribution at each node, helping designers identify issues before fabrication:
+
+- **Under-powered regions**: Which chip pins receive voltage below acceptable tolerance
+- **Current bottlenecks**: Localized high current density caused by narrow traces or insufficient vias
+- **Layout optimization guidance**: Where to place decoupling capacitors, which traces to widen, etc.
+
+This extension integrates KiPIDA's PDN IR Drop solver into EasyEDA, allowing users to run simulations and view results directly within the PCB editor — no need to export files to third-party tools.
+
 ## Features
 
 - Extract PCB traces, vias, and pad data from EasyEDA
