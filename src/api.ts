@@ -23,16 +23,41 @@ export class KipidaApiClient {
   }
 
   /**
-   * 检测服务是否运行
+   * 自动扫描端口范围，找到运行中的服务
+   */
+  async discoverPort(startPort: number = 5000, endPort: number = 5099): Promise<boolean> {
+    for (let p = startPort; p <= endPort; p++) {
+      try {
+        const url = `http://${this.host}:${p}${this.config.testEndpoint}`;
+        const response = await eda.sys_ClientUrl.request(url);
+        if (response.ok) {
+          this.port = p;
+          console.log(`[KipidaApiClient] 发现服务运行在端口 ${p}`);
+          return true;
+        }
+      } catch {}
+    }
+    return false;
+  }
+
+  /**
+   * 快速检测当前端口是否有服务运行（不扫描端口范围）
    */
   async checkService(): Promise<boolean> {
     try {
       const url = `http://${this.host}:${this.port}${this.config.testEndpoint}`;
       const response = await eda.sys_ClientUrl.request(url);
-      return response.ok;
-    } catch {
-      return false;
-    }
+      if (response.ok) return true;
+    } catch {}
+    return false;
+  }
+
+  /**
+   * 完整检测：先试当前端口，失败则扫描端口范围
+   */
+  async checkServiceWithDiscovery(): Promise<boolean> {
+    if (await this.checkService()) return true;
+    return this.discoverPort();
   }
 
   /**

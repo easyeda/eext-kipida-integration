@@ -157,9 +157,13 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def _startup_notice():
+    port_file = os.path.join(os.path.dirname(__file__), '.port')
+    port = '5000'
+    if os.path.exists(port_file):
+        port = open(port_file).read().strip()
     print("\n" + "=" * 50)
     print("  KiPIDA 服务已启动，可以开始仿真分析")
-    print("  地址: http://localhost:5000")
+    print(f"  地址: http://localhost:{port}")
     print("=" * 50 + "\n")
 
 analysis_state = {
@@ -1428,10 +1432,32 @@ async def get_last_input():
 
 if __name__ == "__main__":
     import uvicorn
+    import socket
+
+    def _find_free_port(start=5000, end=5099):
+        for port in range(start, end + 1):
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                try:
+                    s.bind(('0.0.0.0', port))
+                    return port
+                except OSError:
+                    continue
+        return None
+
+    port = _find_free_port()
+    if port is None:
+        print("[KiPIDA] ERROR: 无法找到可用端口 (5000-5099)")
+        sys.exit(1)
+
+    # 写入端口文件，供扩展或其他工具读取
+    port_file = os.path.join(os.path.dirname(__file__), '.port')
+    with open(port_file, 'w') as f:
+        f.write(str(port))
+
     print("=" * 50)
     print("KiPIDA Bridge API 服务启动中...")
     print(f"KiPIDA 路径: {KIPIDA_PATH}")
-    print("访问地址: http://localhost:5000")
-    print("API 文档: http://localhost:5000/docs")
+    print(f"访问地址: http://localhost:{port}")
+    print(f"API 文档: http://localhost:{port}/docs")
     print("=" * 50)
-    uvicorn.run("main:app", host="0.0.0.0", port=5000, reload=True, log_level="info")
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True, log_level="info")

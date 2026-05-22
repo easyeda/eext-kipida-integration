@@ -1,5 +1,6 @@
 /.husky/
 /.vscode/
+/.git/
 /build/
 /config/
 /coverage/
@@ -17,3 +18,8 @@
 /package.json
 /tsconfig.json
 debug.log
+/kipida-service/__pycache__/
+/kipida-service/output/
+/kipida-service/last_input.json
+/kipida-service/KiPIDA/
+/kipida-service/.port

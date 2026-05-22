@@ -113,7 +113,7 @@ async function showServiceNotFoundDialog(api: KipidaApiClient): Promise<boolean>
 
     task = eda.sys_MessageBus.subscribe('kipida-service-dialog', async (msg: any) => {
       if (msg?.type === 'retry' && !resolved) {
-        const ok = await api.checkService();
+        const ok = await api.checkServiceWithDiscovery();
         if (ok) {
           resolved = true;
           cleanup();
@@ -211,7 +211,21 @@ export async function runIRDropAnalysis(): Promise<void> {
     console.log('[KiPIDA] 提取完成:', easyedaData);
     eda.sys_LoadingAndProgressBar.showProgressBar(35, 'pdn-analysis');
 
-    // Step 3: 打开配置面板
+    // Step 3: 检测服务是否运行（在配置面板之前）
+    const api = new KipidaApiClient(CONFIG.host, CONFIG.port, {
+      analyzeEndpoint: CONFIG.analyzeEndpoint,
+      testEndpoint: CONFIG.testEndpoint,
+      plotsEndpoint: CONFIG.plotsEndpoint,
+    });
+
+    const isRunning = await api.checkService();
+    if (!isRunning) {
+      eda.sys_LoadingAndProgressBar.showProgressBar(100, 'pdn-analysis');
+      const retrySuccess = await showServiceNotFoundDialog(api);
+      if (!retrySuccess) return;
+    }
+
+    // Step 4: 打开配置面板
     const { powerNets: netInfos, allNetComponents } = buildNetInfos(kipidaData.nodes);
     const allNetNames = await eda.pcb_Net.getAllNetsName();
     eda.sys_LoadingAndProgressBar.showProgressBar(100, 'pdn-analysis');
@@ -224,7 +238,7 @@ export async function runIRDropAnalysis(): Promise<void> {
 
     eda.sys_LoadingAndProgressBar.showProgressBar(10, 'pdn-analysis');
 
-    // Step 4: 用用户配置替换 sources/loads
+    // Step 5: 用用户配置替换 sources/loads
     const { sources, loads } = userConfigToSourcesLoads(userConfig);
     kipidaData.sources = sources;
     kipidaData.loads = loads;
@@ -236,21 +250,7 @@ export async function runIRDropAnalysis(): Promise<void> {
     console.log('[KiPIDA] 用户配置:', userConfig);
     eda.sys_LoadingAndProgressBar.showProgressBar(30, 'pdn-analysis');
 
-    // Step 5: 调用分析服务
-    const api = new KipidaApiClient(CONFIG.host, CONFIG.port, {
-      analyzeEndpoint: CONFIG.analyzeEndpoint,
-      testEndpoint: CONFIG.testEndpoint,
-      plotsEndpoint: CONFIG.plotsEndpoint,
-    });
-
-    const isRunning = await api.checkService();
-    if (!isRunning) {
-      eda.sys_LoadingAndProgressBar.showProgressBar(100, 'pdn-analysis');
-      const retrySuccess = await showServiceNotFoundDialog(api);
-      if (!retrySuccess) return;
-      eda.sys_LoadingAndProgressBar.showProgressBar(30, 'pdn-analysis');
-    }
-
+    // Step 6: 调用分析服务
     const result = await api.analyze(kipidaData);
     eda.sys_LoadingAndProgressBar.showProgressBar(90, 'pdn-analysis');
 

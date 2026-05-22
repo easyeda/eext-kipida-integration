@@ -11,8 +11,8 @@ if not exist "%KIPIDA_PATH%" (
 
 if not exist "%KIPIDA_PATH%\mesh.py" (
     echo [KiPIDA] mesh.py not found, downloading from GitHub...
-    curl -sL -o "%KIPIDA_PATH%\mesh.py" "https://raw.githubusercontent.com/kbralten/KiPIDA/main/mesh.py"
-    if %errorlevel% neq 0 (
+    curl -L -o "%KIPIDA_PATH%\mesh.py" "https://raw.githubusercontent.com/kbralten/KiPIDA/main/mesh.py"
+    if not exist "%KIPIDA_PATH%\mesh.py" (
         echo [KiPIDA] ERROR: Failed to download mesh.py
         echo [KiPIDA] Please manually download from https://github.com/kbralten/KiPIDA
         pause
@@ -23,8 +23,8 @@ if not exist "%KIPIDA_PATH%\mesh.py" (
 
 if not exist "%KIPIDA_PATH%\solver.py" (
     echo [KiPIDA] solver.py not found, downloading from GitHub...
-    curl -sL -o "%KIPIDA_PATH%\solver.py" "https://raw.githubusercontent.com/kbralten/KiPIDA/main/solver.py"
-    if %errorlevel% neq 0 (
+    curl -L -o "%KIPIDA_PATH%\solver.py" "https://raw.githubusercontent.com/kbralten/KiPIDA/main/solver.py"
+    if not exist "%KIPIDA_PATH%\solver.py" (
         echo [KiPIDA] ERROR: Failed to download solver.py
         echo [KiPIDA] Please manually download from https://github.com/kbralten/KiPIDA
         pause
@@ -34,6 +34,29 @@ if not exist "%KIPIDA_PATH%\solver.py" (
 )
 
 echo [KiPIDA] Using KiPIDA at: %KIPIDA_PATH%
+
+echo [KiPIDA] Checking service files...
+if not exist "%~dp0main.py" (
+    echo [KiPIDA] main.py not found, downloading...
+    curl -L -o "%~dp0main.py" "https://raw.githubusercontent.com/easyeda/eext-kipida-integration/main/kipida-service/main.py"
+    if not exist "%~dp0main.py" (
+        echo [KiPIDA] ERROR: Failed to download main.py
+        pause
+        exit /b 1
+    )
+    echo [KiPIDA] main.py downloaded.
+)
+
+if not exist "%~dp0requirements.txt" (
+    echo [KiPIDA] requirements.txt not found, downloading...
+    curl -L -o "%~dp0requirements.txt" "https://raw.githubusercontent.com/easyeda/eext-kipida-integration/main/kipida-service/requirements.txt"
+    if not exist "%~dp0requirements.txt" (
+        echo [KiPIDA] ERROR: Failed to download requirements.txt
+        pause
+        exit /b 1
+    )
+    echo [KiPIDA] requirements.txt downloaded.
+)
 
 echo [KiPIDA] Checking Python environment...
 
@@ -62,6 +85,7 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-echo [KiPIDA] Starting service on http://localhost:5000 ...
-python -m uvicorn main:app --reload --port 5000 --app-dir "%~dp0"
+echo [KiPIDA] Starting service (auto-detecting available port)...
+cd /d "%~dp0"
+python main.py
 pause
