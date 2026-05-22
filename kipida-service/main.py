@@ -415,20 +415,9 @@ def _rasterize(geometry, grid_size_mm, layer_cu_map=None):
 
     nx = int(_math.ceil((max_x - min_x) / grid_size_mm))
     ny = int(_math.ceil((max_y - min_y) / grid_size_mm))
-    x_coords = np.linspace(min_x, min_x + nx * grid_size_mm, nx + 1)
-    y_coords = np.linspace(min_y, min_y + ny * grid_size_mm, ny + 1)
-    xv, yv = np.meshgrid(x_coords, y_coords)
-    grid_points = np.column_stack((xv.ravel(), yv.ravel()))
 
     all_layers = sorted(set(layer for (net, layer) in geometry.keys()))
     all_nets = sorted(set(net for (net, layer) in geometry.keys()))
-
-    # Outer layers = first and last; inner = everything else
-    outer_layer_set = set()
-    if len(all_layers) >= 2:
-        outer_layer_set = {all_layers[0], all_layers[-1]}
-    elif len(all_layers) == 1:
-        outer_layer_set = {all_layers[0]}
 
     if not layer_cu_map:
         layer_cu_map = {}
@@ -444,13 +433,49 @@ def _rasterize(geometry, grid_size_mm, layer_cu_map=None):
             if poly is None or poly.is_empty:
                 continue
 
+            # Bounding box of this polygon → only test grid points inside it
+            pb_bounds = poly.bounds  # (minx, miny, maxx, maxy)
+            ix_min = max(0, int(_math.floor((pb_bounds[0] - min_x) / grid_size_mm)))
+            ix_max = min(nx, int(_math.ceil((pb_bounds[2] - min_x) / grid_size_mm)))
+            iy_min = max(0, int(_math.floor((pb_bounds[1] - min_y) / grid_size_mm)))
+            iy_max = min(ny, int(_math.ceil((pb_bounds[3] - min_y) / grid_size_mm)))
+
+            sub_nx = ix_max - ix_min + 1
+            sub_ny = iy_max - iy_min + 1
+            if sub_nx <= 0 or sub_ny <= 0:
+                continue
+
+            # Build sub-grid points only within bounding box
+            sub_x = min_x + np.arange(ix_min, ix_max + 1) * grid_size_mm
+            sub_y = min_y + np.arange(iy_min, iy_max + 1) * grid_size_mm
+            sub_xv, sub_yv = np.meshgrid(sub_x, sub_y)
+            sub_points = np.column_stack((sub_xv.ravel(), sub_yv.ravel()))
+
             polys_to_check = [poly] if poly.geom_type == 'Polygon' else list(poly.geoms)
-            layer_mask = np.zeros(len(grid_points), dtype=bool)
+            sub_mask = np.zeros(len(sub_points), dtype=bool)
 
             for p in polys_to_check:
                 pb = p.buffer(1e-5)
                 if pb.is_empty:
                     continue
+                # Further clip to this sub-polygon's bbox within the sub-grid
+                spb = pb.bounds
+                local_ix_min = max(0, int(_math.floor((spb[0] - min_x) / grid_size_mm)) - ix_min)
+                local_ix_max = min(sub_nx - 1, int(_math.ceil((spb[2] - min_x) / grid_size_mm)) - ix_min)
+                local_iy_min = max(0, int(_math.floor((spb[1] - min_y) / grid_size_mm)) - iy_min)
+                local_iy_max = min(sub_ny - 1, int(_math.ceil((spb[3] - min_y) / grid_size_mm)) - iy_min)
+                if local_ix_min > local_ix_max or local_iy_min > local_iy_max:
+                    continue
+
+                # Extract only the points within this sub-polygon's bbox
+                local_mask_2d = np.zeros((sub_ny, sub_nx), dtype=bool)
+                local_mask_2d[local_iy_min:local_iy_max+1, local_ix_min:local_ix_max+1] = True
+                local_indices = np.where(local_mask_2d.ravel())[0]
+                if len(local_indices) == 0:
+                    continue
+
+                local_points = sub_points[local_indices]
+
                 codes = []
                 verts = []
                 ext_coords = list(pb.exterior.coords)
@@ -465,22 +490,27 @@ def _rasterize(geometry, grid_size_mm, layer_cu_map=None):
                     codes.extend([matplotlib.path.Path.LINETO] * (len(int_coords) - 2))
                     codes.append(matplotlib.path.Path.CLOSEPOLY)
                 path = matplotlib.path.Path(verts, codes)
-                mask = path.contains_points(grid_points, radius=1e-9)
-                layer_mask |= mask
+                local_result = path.contains_points(local_points, radius=1e-9)
+                sub_mask[local_indices[local_result]] = True
 
-            mask_2d = layer_mask.reshape((ny + 1, nx + 1))
-            count_on_layer = np.count_nonzero(mask_2d)
+            sub_mask_2d = sub_mask.reshape((sub_ny, sub_nx))
+            count_on_layer = np.count_nonzero(sub_mask_2d)
             if count_on_layer == 0:
                 continue
 
-            y_idxs, x_idxs = np.nonzero(mask_2d)
+            # Map sub-grid indices back to global grid indices
+            sub_y_idxs, sub_x_idxs = np.nonzero(sub_mask_2d)
+            global_x_idxs = sub_x_idxs + ix_min
+            global_y_idxs = sub_y_idxs + iy_min
+
             new_ids = np.arange(node_counter, node_counter + count_on_layer)
             mesh.nodes.extend(new_ids.tolist())
 
+            # Batch node registration
             for i in range(count_on_layer):
                 nid = int(new_ids[i])
-                xi = int(x_idxs[i])
-                yi = int(y_idxs[i])
+                xi = int(global_x_idxs[i])
+                yi = int(global_y_idxs[i])
                 mesh.node_map[(xi, yi, layer_id, net)] = nid
                 mesh.node_coords[nid] = (
                     float(min_x + xi * grid_size_mm),
@@ -491,27 +521,52 @@ def _rasterize(geometry, grid_size_mm, layer_cu_map=None):
 
             node_counter += count_on_layer
 
-            # node_grid for vectorized neighbor lookup
-            node_grid = np.full((ny + 1, nx + 1), -1, dtype=np.int64)
-            node_grid[y_idxs, x_idxs] = new_ids
+            # Build sub-grid node lookup for neighbor edges
+            node_grid = np.full((sub_ny, sub_nx), -1, dtype=np.int64)
+            node_grid[sub_y_idxs, sub_x_idxs] = new_ids
 
-            right_mask = mask_2d[:, :-1] & mask_2d[:, 1:]
+            # Horizontal edges (right neighbors)
+            right_mask = sub_mask_2d[:, :-1] & sub_mask_2d[:, 1:]
             if np.any(right_mask):
                 yr, xr = np.nonzero(right_mask)
-                u_ids = node_grid[yr, xr]
-                v_ids = node_grid[yr, xr + 1]
-                for u, v in zip(u_ids, v_ids):
-                    mesh.add_edge_direct(int(u), int(v), g_lat)
+                u_ids = node_grid[yr, xr].tolist()
+                v_ids = node_grid[yr, xr + 1].tolist()
+                n_edges = len(u_ids)
+                # add_edge_direct adds 4 entries per edge: diag(u), diag(v), off(u,v), off(v,u)
+                mesh.G_coo_row.extend(u_ids)
+                mesh.G_coo_col.extend(u_ids)
+                mesh.G_coo_data.extend([g_lat] * n_edges)
+                mesh.G_coo_row.extend(v_ids)
+                mesh.G_coo_col.extend(v_ids)
+                mesh.G_coo_data.extend([g_lat] * n_edges)
+                mesh.G_coo_row.extend(u_ids)
+                mesh.G_coo_col.extend(v_ids)
+                mesh.G_coo_data.extend([-g_lat] * n_edges)
+                mesh.G_coo_row.extend(v_ids)
+                mesh.G_coo_col.extend(u_ids)
+                mesh.G_coo_data.extend([-g_lat] * n_edges)
 
-            top_mask = mask_2d[:-1, :] & mask_2d[1:, :]
+            # Vertical edges (top neighbors)
+            top_mask = sub_mask_2d[:-1, :] & sub_mask_2d[1:, :]
             if np.any(top_mask):
                 yt, xt = np.nonzero(top_mask)
-                u_ids = node_grid[yt, xt]
-                v_ids = node_grid[yt + 1, xt]
-                for u, v in zip(u_ids, v_ids):
-                    mesh.add_edge_direct(int(u), int(v), g_lat)
+                u_ids = node_grid[yt, xt].tolist()
+                v_ids = node_grid[yt + 1, xt].tolist()
+                n_edges = len(u_ids)
+                mesh.G_coo_row.extend(u_ids)
+                mesh.G_coo_col.extend(u_ids)
+                mesh.G_coo_data.extend([g_lat] * n_edges)
+                mesh.G_coo_row.extend(v_ids)
+                mesh.G_coo_col.extend(v_ids)
+                mesh.G_coo_data.extend([g_lat] * n_edges)
+                mesh.G_coo_row.extend(u_ids)
+                mesh.G_coo_col.extend(v_ids)
+                mesh.G_coo_data.extend([-g_lat] * n_edges)
+                mesh.G_coo_row.extend(v_ids)
+                mesh.G_coo_col.extend(u_ids)
+                mesh.G_coo_data.extend([-g_lat] * n_edges)
 
-            print(f"[FEM] net={net} layer={layer_id}: {count_on_layer} grid nodes")
+            print(f"[FEM] net={net} layer={layer_id}: {count_on_layer} grid nodes (sub-grid {sub_nx}x{sub_ny} of {nx+1}x{ny+1})")
 
     print(f"[FEM] Rasterization done: {node_counter} total nodes, grid {nx+1}x{ny+1}")
     return mesh, node_net_map, grid_origin, all_layers
@@ -668,7 +723,7 @@ def build_mesh_and_solve(data: KipidaInput) -> Dict[str, float]:
     """
     FEM grid mesh approach: build Shapely geometry from EasyEDA data,
     rasterize onto a regular grid, solve with KiPIDA Solver.
-    Returns (voltages_by_str_id, mesh_points_for_plotting).
+    Returns (voltages_by_str_id, mesh_points_for_plotting, timings_dict).
     """
     from mesh import Mesh
     from solver import Solver
@@ -677,9 +732,14 @@ def build_mesh_and_solve(data: KipidaInput) -> Dict[str, float]:
     from scipy.sparse.csgraph import connected_components
     import math as _math
 
+    timings = {}
+
+    t0 = time.time()
     _log_input_summary(data)
+    timings['input_logging'] = time.time() - t0
 
     # 1. Active nets
+    t0 = time.time()
     source_node_ids = {s.node_id for s in data.sources}
     load_node_ids = {l.node_id for l in data.loads}
     active_node_ids = source_node_ids | load_node_ids
@@ -691,25 +751,33 @@ def build_mesh_and_solve(data: KipidaInput) -> Dict[str, float]:
         raise ValueError("没有有效的电压源节点，无法求解")
 
     node_by_id = {n.id: n for n in data.nodes}
+    timings['prepare_active_nets'] = time.time() - t0
 
     # 2. Build geometry & rasterize
+    t0 = time.time()
     geometry = _build_geometry(data, active_nets)
     if not geometry:
         raise ValueError("无法从输入数据构建铜皮几何")
+    timings['build_geometry'] = time.time() - t0
 
+    t0 = time.time()
     grid_size_mm = data.mesh_resolution or GRID_SIZE_MM
     layer_cu_map = data.layer_cu_thickness or {}
     mesh, node_net_map, grid_origin, all_layers = _rasterize(geometry, grid_size_mm, layer_cu_map)
 
     if not mesh.nodes:
         raise ValueError("栅格化后没有网格节点")
+    timings['rasterize'] = time.time() - t0
 
     # 3. Via connections — substrate height = board_thickness / (num_layers - 1)
+    t0 = time.time()
     num_layers = len(all_layers) if all_layers else 2
     substrate_height = (data.board_thickness or 1.6) / max(num_layers - 1, 1)
     _add_vias(mesh, data, active_nets, all_layers, grid_size_mm, grid_origin, substrate_height)
+    timings['add_vias'] = time.time() - t0
 
     # 4. Snap source/load nodes to nearest grid nodes
+    t0 = time.time()
     sources = []
     source_snap = {}
     for s in data.sources:
@@ -749,8 +817,10 @@ def build_mesh_and_solve(data: KipidaInput) -> Dict[str, float]:
         raise ValueError("没有有效的电压源节点可以 snap 到网格")
 
     print(f"[FEM] Snapped: {len(sources)} sources, {len(loads)} loads")
+    timings['snap_sources_loads'] = time.time() - t0
 
     # 5. Connected component filtering
+    t0 = time.time()
     N = len(mesh.nodes)
     if mesh.G_coo_data:
         rows = np.array(mesh.G_coo_row)
@@ -794,12 +864,16 @@ def build_mesh_and_solve(data: KipidaInput) -> Dict[str, float]:
               for l in loads if l["node_id"] in keep_set]
 
     print(f"[FEM] Solving: {len(keep_indices)} nodes, {len(sources2)} sources, {len(loads2)} loads")
+    timings['connected_components'] = time.time() - t0
 
     # 6. Solve
+    t0 = time.time()
     solver = Solver(debug=False)
     int_voltages = solver.solve(m2, sources2, loads2)
+    timings['solve'] = time.time() - t0
 
     # 7. Map voltages back to original string node IDs
+    t0 = time.time()
     snap_map = {}
     snap_map.update(source_snap)
     snap_map.update(load_snap)
@@ -828,8 +902,10 @@ def build_mesh_and_solve(data: KipidaInput) -> Dict[str, float]:
 
     valid_count = len(voltages)
     print(f"[FEM] Solved: {valid_count} original nodes mapped, {len(int_voltages)} total grid voltages")
+    timings['map_voltages'] = time.time() - t0
 
     # 8. Build mesh_points for plotting (coordinates in mil)
+    t0 = time.time()
     mesh_points = []
     for new_idx, voltage in int_voltages.items():
         if not _math.isfinite(voltage):
@@ -855,7 +931,19 @@ def build_mesh_and_solve(data: KipidaInput) -> Dict[str, float]:
         layer = node.layer if node.layer and node.layer > 0 else (all_layers[0] if all_layers else 1)
         mesh_points.append((node.x, node.y, layer, node.net, v, node.type, w, h))
 
-    return voltages, mesh_points
+    timings['build_mesh_points'] = time.time() - t0
+
+    # 打印耗时汇总
+    print("\n" + "=" * 60)
+    print("[TIMING] 仿真各步骤耗时:")
+    total = 0.0
+    for step, dt in timings.items():
+        print(f"  {step:25s}: {dt:.3f}s")
+        total += dt
+    print(f"  {'TOTAL':25s}: {total:.3f}s")
+    print("=" * 60 + "\n")
+
+    return voltages, mesh_points, timings
 
 
 def generate_plot_images(mesh_points: list, mesh_resolution: float = 0.5, all_layers: list = None, net_results: list = None, max_drop_pct: float = 5.0, resistances=None, node_voltages=None, nodes=None) -> Dict[str, 'NetPlotImages']:
@@ -1190,7 +1278,7 @@ async def analyze_pcb(data: KipidaInput, skip_plots: bool = False):
             cached["message"] = f"分析完成（缓存）。耗时 {time.time()-start_time:.3f}s"
             return AnalysisOutput(**cached)
 
-        voltages, mesh_points = build_mesh_and_solve(data)
+        voltages, mesh_points, solve_timings = build_mesh_and_solve(data)
 
         if not voltages:
             return AnalysisOutput(success=False, message="求解器返回空结果，请检查电路连通性")
@@ -1215,13 +1303,20 @@ async def analyze_pcb(data: KipidaInput, skip_plots: bool = False):
         analysis_state["last_voltages"] = voltages
 
         plot_images = {}
+        plot_time = 0.0
         if not skip_plots:
             plot_start = time.time()
             plot_images = generate_plot_images(mesh_points, data.mesh_resolution or 0.5, all_layers, net_results, data.max_drop_pct or 5.0, data.resistances, voltages, data.nodes)
-            print(f"[KiPIDA] 可视化耗时: {time.time()-plot_start:.3f}s")
+            plot_time = time.time() - plot_start
+            solve_timings['plot_generation'] = plot_time
+            print(f"[KiPIDA] 可视化耗时: {plot_time:.3f}s")
 
         overall_max_drop = max((r.max_drop for r in net_results), default=0.0)
         total_current = sum(l.current for l in data.loads)
+
+        total_time = time.time() - start_time
+        timing_summary = " | ".join(f"{k}={v:.2f}s" for k, v in solve_timings.items())
+        msg = f"分析完成。{len(data.nodes)} 个节点, {len(data.resistances)} 个电阻, 总耗时 {total_time:.3f}s [{timing_summary}]"
 
         results = AnalysisResults(
             max_drop=round(overall_max_drop, 6),
@@ -1232,7 +1327,7 @@ async def analyze_pcb(data: KipidaInput, skip_plots: bool = False):
 
         output = AnalysisOutput(
             success=True,
-            message=f"分析完成。{len(data.nodes)} 个节点, {len(data.resistances)} 个电阻, 耗时 {time.time()-start_time:.3f}s",
+            message=msg,
             results=results,
         )
 
@@ -1241,7 +1336,7 @@ async def analyze_pcb(data: KipidaInput, skip_plots: bool = False):
             _cache_put(cache_key, output.model_dump())
 
         analysis_state["last_result"] = output.model_dump()
-        print(f"[KiPIDA] 分析完成: 最大压降={overall_max_drop:.6f}V, 耗时={time.time()-start_time:.3f}s")
+        print(f"[KiPIDA] 分析完成: 最大压降={overall_max_drop:.6f}V, 总耗时={total_time:.3f}s")
         return output
 
     except Exception as e:
