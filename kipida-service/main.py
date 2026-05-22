@@ -154,6 +154,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.on_event("startup")
+async def _startup_notice():
+    print("\n" + "=" * 50)
+    print("  KiPIDA 服务已启动，可以开始仿真分析")
+    print("  地址: http://localhost:5000")
+    print("=" * 50 + "\n")
+
 analysis_state = {
     "last_input": None,
     "last_result": None,
