@@ -86,61 +86,61 @@
 <div class="main">
   <!-- Left: net list -->
   <div class="left">
-    <div class="left-title">Detected Power Rails</div>
+    <div class="left-title">检测到的电源网络</div>
     <div style="padding:4px 6px;border-bottom:1px solid #ddd">
       <input type="text" id="net-search" placeholder="搜索网络..." oninput="filterNetList()" style="width:100%;padding:3px 6px;border:1px solid #bbb;border-radius:3px;font-size:11px">
     </div>
     <div class="net-list" id="net-list"></div>
     <div class="left-footer">
-      <button class="btn-add-net" onclick="addManualNet()">Add Manual Net</button>
+      <button class="btn-add-net" onclick="addManualNet()">手动添加网络</button>
     </div>
   </div>
 
   <!-- Right: rail properties -->
   <div class="right">
     <div class="rail-header">
-      <span style="font-weight:600;font-size:13px">Rail Properties</span>
-      <label>Nominal Voltage (V):</label>
+      <span style="font-weight:600;font-size:13px">电源轨参数</span>
+      <label>标称电压 (V)：</label>
       <input type="number" id="rail-voltage" value="3.3" step="0.1" min="0" onchange="updateVoltage()">
     </div>
     <div class="table-wrap">
       <table id="rail-table">
-        <thead><tr><th>Role</th><th>Ref</th><th>Value</th><th>Pads</th></tr></thead>
+        <thead><tr><th>角色</th><th>位号</th><th>数值</th><th>引脚数</th></tr></thead>
         <tbody id="rail-tbody"></tbody>
       </table>
       <div class="empty-hint" id="empty-hint">请先在左侧选择一个电源网络</div>
     </div>
     <div class="table-actions">
-      <button class="btn-action" onclick="addSource()" id="btn-add-source" disabled>+ Source</button>
-      <button class="btn-action" onclick="addLoad()" id="btn-add-load" disabled>+ Load</button>
-      <button class="btn-action btn-remove" onclick="removeSelected()" id="btn-remove" disabled>- Remove</button>
+      <button class="btn-action" onclick="addSource()" id="btn-add-source" disabled>+ 电压源</button>
+      <button class="btn-action" onclick="addLoad()" id="btn-add-load" disabled>+ 负载</button>
+      <button class="btn-action btn-remove" onclick="removeSelected()" id="btn-remove" disabled>- 删除</button>
     </div>
   </div>
 </div>
 
 <div class="bottom">
   <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-    <label>Mesh Resolution (mm):</label>
+    <label>网格分辨率 (mm)：</label>
     <input type="number" id="mesh-resolution" value="0.1" min="0.05" max="2" step="0.05" style="width:55px">
-    <label style="margin-left:8px">Max Drop %:</label>
+    <label style="margin-left:8px">最大压降 %：</label>
     <input type="number" id="max-drop" value="5" min="1" max="100" step="1" style="width:50px">
-    <button class="btn-action" style="margin-left:12px" onclick="openStackup()">Stackup Settings</button>
+    <button class="btn-action" style="margin-left:12px" onclick="openStackup()">层叠设置</button>
   </div>
   <div class="bottom-right">
-    <button class="btn-main btn-run" id="btn-run" onclick="runAnalysis()" disabled>Run Simulation</button>
-    <button class="btn-main btn-close" onclick="cancel()">Close</button>
+    <button class="btn-main btn-run" id="btn-run" onclick="runAnalysis()" disabled>开始仿真</button>
+    <button class="btn-main btn-close" onclick="cancel()">关闭</button>
   </div>
 </div>
 
 <!-- Stackup settings overlay -->
 <div class="picker-overlay" id="stackup-overlay">
   <div class="picker-box" style="min-width:320px">
-    <h3>Stackup Settings</h3>
+    <h3>层叠设置</h3>
     <div style="margin-bottom:10px">
-      <label style="font-size:12px;font-weight:600">Board Thickness (mm):</label>
+      <label style="font-size:12px;font-weight:600">板厚 (mm)：</label>
       <input type="number" id="board-thickness" value="1.6" min="0.1" max="10" step="0.1" style="width:70px;padding:3px 6px;border:1px solid #bbb;border-radius:3px;font-size:12px;margin-left:6px">
     </div>
-    <div style="font-size:12px;font-weight:600;margin-bottom:6px">Copper Thickness per Layer (mm):</div>
+    <div style="font-size:12px;font-weight:600;margin-bottom:6px">各层铜厚 (mm)：</div>
     <div id="stackup-layers" style="max-height:200px;overflow-y:auto"></div>
     <div class="picker-btns" style="margin-top:10px">
       <button onclick="closeStackup()">取消</button>
@@ -160,13 +160,13 @@
     </div>
     <div class="picker-check-list" id="picker-check-list"></div>
     <div class="current-row" id="picker-current-row" style="display:none">
-      <label>电流 (A):</label>
+      <label>电流 (A)：</label>
       <input type="number" id="picker-current" value="1.0" min="0.001" step="0.1">
     </div>
     <div id="picker-pads-section" style="display:none;margin-bottom:10px">
-      <div style="font-size:12px;font-weight:600;margin-bottom:4px">Select Pads:</div>
+      <div style="font-size:12px;font-weight:600;margin-bottom:4px">选择引脚：</div>
       <label style="font-size:12px;display:flex;align-items:center;gap:4px;margin-bottom:4px;cursor:pointer">
-        <input type="checkbox" id="picker-pads-all" checked onchange="toggleAllPads()"> Use all connected pads
+        <input type="checkbox" id="picker-pads-all" checked onchange="toggleAllPads()"> 使用所有连接引脚
       </label>
       <div id="picker-pads-list" style="max-height:80px;overflow-y:auto;padding-left:4px"></div>
     </div>
@@ -285,12 +285,13 @@
 
     tbody.innerHTML = cfg.rows.map((row, i) => {
       const roleClass = row.role === 'SOURCE' ? 'role-source' : 'role-load';
+      const roleLabel = row.role === 'SOURCE' ? '电压源' : '负载';
       const valueCell = row.role === 'LOAD'
         ? `${row.current}A`
         : '---';
       const padsCount = row.node_ids.length;
       return `<tr class="${i === selectedRowIdx ? 'selected-row' : ''}" onclick="selectRow(${i})" ondblclick="editRow(${i})">
-        <td class="${roleClass}">${row.role}</td>
+        <td class="${roleClass}">${roleLabel}</td>
         <td>${row.ref_des}</td>
         <td>${valueCell}</td>
         <td>${padsCount}</td>
@@ -411,8 +412,8 @@
 
     list.innerHTML = comps.map(c => {
       const label = c.device_name
-        ? `${c.ref_des} (${c.device_name}) (${c.node_ids.length}p)`
-        : `${c.ref_des} (${c.node_ids.length}p)`;
+        ? `${c.ref_des} (${c.device_name}) (${c.node_ids.length} 引脚)`
+        : `${c.ref_des} (${c.node_ids.length} 引脚)`;
       const checked = editingRowIdx >= 0
         ? 'checked disabled'
         : (prevChecked.has(c.ref_des) ? 'checked' : '');
@@ -451,7 +452,7 @@
   function updatePickerCount() {
     const count = getCheckedRefDes().size;
     const el = document.getElementById('picker-count');
-    el.textContent = count > 1 ? `${count} selected` : '';
+    el.textContent = count > 1 ? `已选 ${count} 项` : '';
   }
 
   function onCheckChange() {
@@ -594,7 +595,7 @@
     document.getElementById('picker-current-row').style.display = 'none';
     document.getElementById('picker-overlay').classList.add('show');
 
-    const btnOk = document.querySelector('.picker-btns .btn-ok');
+    const btnOk = document.querySelector('#picker-overlay .picker-btns .btn-ok');
     const origOnclick = btnOk.onclick;
     btnOk.onclick = () => {
       const name = select.value;
@@ -618,10 +619,10 @@
       return;
     }
     container.innerHTML = layerIds.map(lid => {
-      const name = layerNames[lid] || `Layer ${lid}`;
+      const name = layerNames[lid] || `第 ${lid} 层`;
       const val = layerCuThickness[lid] || 0.035;
       return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
-        <span style="font-size:12px;min-width:100px">${name} (L${lid}):</span>
+        <span style="font-size:12px;min-width:100px">${name} (L${lid})：</span>
         <input type="number" class="stackup-cu-input" data-lid="${lid}" value="${val}" min="0.005" max="0.21" step="0.005" style="width:70px;padding:2px 4px;border:1px solid #bbb;border-radius:3px;font-size:12px">
         <span style="font-size:11px;color:#888">mm</span>
       </div>`;

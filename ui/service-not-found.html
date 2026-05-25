@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>KiPIDA Service</title>
+<title>KiPIDA 服务</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html, body { height: 100%; overflow: hidden; }
@@ -39,7 +39,7 @@ body {
   background: #34C759;
   border-color: #34C759;
   color: #FFF;
-  padding: 8px 24px;
+  padding: 8px 20px;
   font-size: 13px;
 }
 .btn-download:hover { background: #2DB84D; border-color: #2DB84D; color: #FFF; }
@@ -55,12 +55,11 @@ body {
   background: #007AFF;
   border-color: #007AFF;
   color: #FFF;
-  padding: 8px 28px;
+  padding: 8px 20px;
   font-size: 13px;
   border-radius: 4px;
 }
 .btn-primary:hover { background: #0066DD; border-color: #0066DD; color: #FFF; }
-.divider { width: 100%; max-width: 400px; border-top: 1px solid #E0E0E0; margin: 12px 0; }
 </style>
 </head>
 <body>
@@ -71,16 +70,7 @@ body {
 
 <div class="btn-group">
   <button class="btn btn-python" onclick="openPython()" id="btnPython"></button>
-  <button class="btn btn-download" onclick="openKiPIDA()" id="btnKiPIDA"></button>
-</div>
-
-<div class="divider"></div>
-<div class="section-title" id="scriptTitle"></div>
-<div class="btn-group">
   <button class="btn btn-download" onclick="downloadPackage()" id="btnDownload"></button>
-</div>
-
-<div style="margin-top: 16px;">
   <button class="btn btn-primary" onclick="retry()" id="btnRetry"></button>
 </div>
 
@@ -91,22 +81,18 @@ body {
     zh: {
       title: 'KiPIDA 服务未启动',
       desc: '请按以下步骤配置并启动 KiPIDA 分析服务：',
-      steps: '1. 安装 Python 3.10+（如已安装可跳过）\n2. 下载启动脚本 start.bat\n3. 双击运行 start.bat（自动下载所有依赖）\n4. 服务启动后点击"重新检测"',
-      btn_python: '安装 Python',
-      btn_kipida: 'KiPIDA 原项目',
-      script_title: '下载启动脚本：',
-      btn_download: '下载 start.bat',
-      btn_retry: '重新检测'
+      steps: '1. 下载并安装 Python 3.10+（如已安装可跳过）\n2. 下载并运行启动脚本 start.bat\n3. 服务启动成功后点击"重新检测"',
+      btn_python: '1. 安装 Python',
+      btn_download: '2. 下载启动脚本',
+      btn_retry: '3. 重新检测'
     },
     en: {
       title: 'KiPIDA Service Not Running',
       desc: 'Please follow these steps to configure and start the KiPIDA analysis service:',
-      steps: '1. Install Python 3.10+ (skip if already installed)\n2. Download the start.bat script\n3. Double-click start.bat (auto-downloads all dependencies)\n4. Click "Retry" after the service starts',
-      btn_python: 'Install Python',
-      btn_kipida: 'KiPIDA Project',
-      script_title: 'Download startup script:',
-      btn_download: 'Download start.bat',
-      btn_retry: 'Retry'
+      steps: '1. Download and install Python 3.10+ (skip if already installed)\n2. Download and run the start.bat startup script\n3. Click "Retry" after the service starts successfully',
+      btn_python: '1. Install Python',
+      btn_download: '2. Download Script',
+      btn_retry: '3. Retry'
     }
   };
 
@@ -118,8 +104,6 @@ body {
     document.getElementById('descText').textContent = T.desc;
     document.getElementById('stepsText').innerText = T.steps;
     document.getElementById('btnPython').textContent = T.btn_python;
-    document.getElementById('btnKiPIDA').textContent = T.btn_kipida;
-    document.getElementById('scriptTitle').textContent = T.script_title;
     document.getElementById('btnDownload').textContent = T.btn_download;
     document.getElementById('btnRetry').textContent = T.btn_retry;
     document.title = T.title;
@@ -162,20 +146,13 @@ body {
     }
   };
 
-  window.openKiPIDA = function() {
-    var eda = getEda();
-    if (eda && eda.sys_Window) {
-      eda.sys_Window.open('https://github.com/kbralten/KiPIDA');
-    }
-  };
-
   window.downloadPackage = function() {
     var url = 'https://raw.githubusercontent.com/easyeda/eext-kipida-integration/main/kipida-service/start.bat';
     fetch(url).then(function(r) { return r.text(); }).then(function(content) {
-      var blob = new Blob([content], { type: 'application/octet-stream' });
+      var blob = buildZip('start.bat', content);
       var a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = 'start.bat';
+      a.download = 'kipida-service.zip';
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -187,6 +164,82 @@ body {
       }
     });
   };
+
+  // 构建 STORE 模式 ZIP（不压缩），让浏览器和杀毒软件不再把单个 .bat 当可疑下载
+  function buildZip(filename, contentStr) {
+    var enc = new TextEncoder();
+    var nameBytes = enc.encode(filename);
+    var dataBytes = enc.encode(contentStr);
+    var crc = crc32(dataBytes);
+
+    var localHeader = new ArrayBuffer(30);
+    var lh = new DataView(localHeader);
+    lh.setUint32(0, 0x04034b50, true);
+    lh.setUint16(4, 20, true);
+    lh.setUint16(6, 0, true);
+    lh.setUint16(8, 0, true);
+    lh.setUint16(10, 0, true);
+    lh.setUint16(12, 0, true);
+    lh.setUint32(14, crc, true);
+    lh.setUint32(18, dataBytes.length, true);
+    lh.setUint32(22, dataBytes.length, true);
+    lh.setUint16(26, nameBytes.length, true);
+    lh.setUint16(28, 0, true);
+
+    var central = new ArrayBuffer(46);
+    var cd = new DataView(central);
+    cd.setUint32(0, 0x02014b50, true);
+    cd.setUint16(4, 20, true);
+    cd.setUint16(6, 20, true);
+    cd.setUint16(8, 0, true);
+    cd.setUint16(10, 0, true);
+    cd.setUint16(12, 0, true);
+    cd.setUint16(14, 0, true);
+    cd.setUint32(16, crc, true);
+    cd.setUint32(20, dataBytes.length, true);
+    cd.setUint32(24, dataBytes.length, true);
+    cd.setUint16(28, nameBytes.length, true);
+    cd.setUint16(30, 0, true);
+    cd.setUint16(32, 0, true);
+    cd.setUint16(34, 0, true);
+    cd.setUint16(36, 0, true);
+    cd.setUint32(38, 0, true);
+    cd.setUint32(42, 0, true);
+
+    var localSize = 30 + nameBytes.length + dataBytes.length;
+    var centralSize = 46 + nameBytes.length;
+    var eocd = new ArrayBuffer(22);
+    var e = new DataView(eocd);
+    e.setUint32(0, 0x06054b50, true);
+    e.setUint16(4, 0, true);
+    e.setUint16(6, 0, true);
+    e.setUint16(8, 1, true);
+    e.setUint16(10, 1, true);
+    e.setUint32(12, centralSize, true);
+    e.setUint32(16, localSize, true);
+    e.setUint16(20, 0, true);
+
+    return new Blob([
+      localHeader, nameBytes, dataBytes,
+      central, nameBytes,
+      eocd
+    ], { type: 'application/zip' });
+  }
+
+  var _crcTable = null;
+  function crc32(bytes) {
+    if (!_crcTable) {
+      _crcTable = new Uint32Array(256);
+      for (var i = 0; i < 256; i++) {
+        var c = i;
+        for (var j = 0; j < 8; j++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+        _crcTable[i] = c >>> 0;
+      }
+    }
+    var crc = 0xFFFFFFFF;
+    for (var i = 0; i < bytes.length; i++) crc = (_crcTable[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8)) >>> 0;
+    return (crc ^ 0xFFFFFFFF) >>> 0;
+  }
 
   window.retry = function() {
     var eda = getEda();

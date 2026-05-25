@@ -35,7 +35,7 @@
 <body>
 
 <div class="summary">
-  <div class="summary-title">System Simulation Results:</div>
+  <div class="summary-title">系统仿真结果：</div>
   <div id="summary-text" class="loading">等待分析结果...</div>
 </div>
 
@@ -47,7 +47,7 @@
 </div>
 
 <div class="footer">
-  <button class="btn-close" onclick="closeWindow()">Close</button>
+  <button class="btn-close" onclick="closeWindow()">关闭</button>
 </div>
 
 <script>
@@ -73,7 +73,7 @@
       const minV = net.min_voltage != null ? net.min_voltage.toFixed(4) : 'N/A';
       const maxV = net.max_voltage != null ? net.max_voltage.toFixed(4) : 'N/A';
       const drop = net.max_drop != null ? net.max_drop.toFixed(4) : 'N/A';
-      text += `Rail: ${net.net}\n  Range: ${minV} - ${maxV} V\n  Drop:  ${drop} V\n`;
+      text += `电源轨：${net.net}\n  电压范围：${minV} - ${maxV} V\n  最大压降：${drop} V\n`;
     }
     document.getElementById('summary-text').textContent = text;
 
@@ -121,7 +121,7 @@
     const tabs = [];
 
     if (netImg.view_3d) {
-      tabs.push(`<div class="view-tab${currentView === '3d' ? ' active' : ''}" onclick="selectView('3d')">3D View</div>`);
+      tabs.push(`<div class="view-tab${currentView === '3d' ? ' active' : ''}" onclick="selectView('3d')">3D 视图</div>`);
     }
     for (const lid of layers) {
       const label = getLayerLabel(lid);
@@ -134,7 +134,7 @@
   function selectView(view) {
     currentView = view;
     document.querySelectorAll('.view-tab').forEach(t => {
-      const isActive = (view === '3d' && t.textContent === '3D View') ||
+      const isActive = (view === '3d' && t.textContent === '3D 视图') ||
                        (view !== '3d' && t.textContent === getLayerLabel(view));
       t.classList.toggle('active', isActive);
     });
@@ -164,8 +164,8 @@
     if (layerNames[lid]) return layerNames[lid];
     if (layerNames[parseInt(lid)]) return layerNames[parseInt(lid)];
     // 回退到默认名
-    const defaults = { '1': 'Top Layer', '2': 'Bottom Layer' };
-    return defaults[lid] || `Layer ${lid}`;
+    const defaults = { '1': '顶层', '2': '底层' };
+    return defaults[lid] || `第 ${lid} 层`;
   }
 
   function closeWindow() {

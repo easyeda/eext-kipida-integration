@@ -1,12 +1,12 @@
 {
-	"name": "kipida-bridge",
+	"name": "kipida-integration",
 	"uuid": "a1i8t4u1l2a6t3i7o9n1f3i6l8e0p4u9",
-	"displayName": "KiPIDA 桥接插件",
-	"description": "桥接 EasyEDA 与 KiPIDA PDN IR Drop 分析工具",
+	"displayName": "KiPIDA仿真",
+	"description": "桥接 EasyEDA 与 KiPIDA 进行 PCB 直流（DC）电源完整性（PI）分析仿真。",
 	"version": "1.0.0",
-	"publisher": "",
+	"publisher": "EasyEDA",
 	"engines": {
-		"eda": "^2.3.0"
+		"eda": "^3.2.0"
 	},
 	"license": "Apache-2.0",
 	"repository": {
@@ -14,12 +14,12 @@
 		"url": ""
 	},
 	"categories": "PCB",
-	"keywords": ["PDN", "IR Drop", "Power Analysis", "KiPIDA", "Simulation"],
+	"keywords": ["PDN", "IR Drop", "Power Analysis", "KiPIDA", "Simulation", "PI", "仿真"],
 	"images": {
 		"logo": "./images/logo.png"
 	},
-	"homepage": "https://pro.lceda.cn",
-	"bugs": "https://lceda.cn/page/feedback?originPage=other",
+	"homepage": "https://github.com/easyeda/eext-kipida-integration",
+	"bugs": "https://github.com/easyeda/eext-kipida-integration/issues",
 	"activationEvents": {
 		"onEditorPcb": true
 	},
@@ -29,11 +29,11 @@
 		"pcb": [
 			{
 				"id": "KiPIDA-Bridge-Pcb",
-				"title": "PDN 分析",
+				"title": "KiPIDA仿真",
 				"menuItems": [
 					{
-						"id": "Run IR Drop Analysis",
-						"title": "运行 IR Drop 分析...",
+						"id": "Run KiPIDA...",
+						"title": "运行KiPIDA仿真...",
 						"registerFn": "runIRDropAnalysis"
 					},
 					{
