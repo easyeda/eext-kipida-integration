@@ -1,4 +1,5 @@
 {
+	"Sample IFrame Page": "This is a sample IFrame page",
 	"About": "About",
 	"About Content": "KiPIDA Bridge Plugin\n\nBridges EasyEDA with KiPIDA PDN IR Drop analysis tool\nSends PCB data to local Python service for analysis\n\nVersion: ${1}",
 	"Run IR Drop Analysis": "Run IR Drop Analysis",

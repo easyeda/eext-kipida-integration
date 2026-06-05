@@ -1,4 +1,6 @@
 {
+	"displayName": "KiPIDA Integration",
+	"description": "Bridge EasyEDA with KiPIDA for PCB DC Power Integrity (PI) analysis simulation.",
 	"About": "About",
 	"About Content": "Simulation File Pusher\n\nThis is a universal PCB simulation file pusher extension that supports exporting PCB design files and pushing them to third-party simulation software.\n\nMain Features:\n• ODB++ file export and push\n• Netlist file export and push\n• Smart client detection\n• Reliable file transfer\n\nVersion: ${1}\nAuthor: EasyEDA Team",
 	"Export ODB File": "Push ODB++ File",
@@ -33,5 +35,12 @@
 	"Client Check": "Checking client status...",
 	"File Get Failed": "Failed to get ${1} file",
 	"ODB File": "ODB++",
-	"Netlist File": "Netlist"
+	"Netlist File": "Netlist",
+	"PDN": "PDN",
+	"IR Drop": "IR Drop",
+	"Power Analysis": "Power Analysis",
+	"KiPIDA": "KiPIDA",
+	"Simulation": "Simulation",
+	"PI": "PI",
+	"仿真": "Simulation"
 }

@@ -1,4 +1,5 @@
 {
+	"Sample IFrame Page": "这是一个示例 IFrame 页面",
 	"About": "关于",
 	"About Content": "KiPIDA 桥接插件\n\n用于桥接 EasyEDA 与 KiPIDA PDN IR Drop 分析工具\n将 PCB 数据发送到本地 Python 服务进行分析\n\n版本：${1}",
 	"Run IR Drop Analysis": "运行 IR Drop 分析",
