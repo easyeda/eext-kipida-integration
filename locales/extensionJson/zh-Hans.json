@@ -1,6 +1,6 @@
 {
-	"displayName": "KiPIDA仿真",
-	"description": "桥接 EasyEDA 与 KiPIDA 进行 PCB 直流（DC）电源完整性（PI）分析仿真。",
+	"KiPIDA仿真": "KiPIDA仿真",
+	"桥接 EasyEDA 与 KiPIDA 进行 PCB 直流（DC）电源完整性（PI）分析仿真。": "桥接 EasyEDA 与 KiPIDA 进行 PCB 直流（DC）电源完整性（PI）分析仿真。",
 	"About": "关于",
 	"About Content": "仿真文件推送工具\n\n这是一个通用的PCB仿真文件推送扩展，支持将PCB设计文件导出并推送到第三方仿真软件。\n\n主要功能：\n• ODB++文件导出和推送\n• 网表文件导出和推送\n• 智能客户端检测\n• 可靠文件传输\n\n版本：${1}\n作者：EasyEDA团队",
 	"Export ODB File": "推送ODB++文件",
