@@ -81,7 +81,7 @@ body {
     zh: {
       title: 'KiPIDA 服务未启动',
       desc: '请按以下步骤配置并启动 KiPIDA 分析服务：',
-      steps: '1. 下载并安装 Python 3.10+（如已安装可跳过）\n2. 下载启动脚本压缩包，解压后运行启动脚本 start.bat\n3. 服务启动成功后点击"重新检测"',
+      steps: '1. 下载并安装 Python 3.10+（如已安装可跳过）\n2. 下载启动脚本压缩包并解压，Windows 运行 start.bat，Linux 运行 start-linux.sh，macOS 运行 start-macos.sh\n3. 服务启动成功后点击"重新检测"',
       btn_python: '1. 安装 Python',
       btn_download: '2. 下载启动脚本',
       btn_retry: '3. 重新检测'
@@ -89,7 +89,7 @@ body {
     en: {
       title: 'KiPIDA Service Not Running',
       desc: 'Please follow these steps to configure and start the KiPIDA analysis service:',
-      steps: '1. Download and install Python 3.10+ (skip if already installed)\n2. Download the startup script ZIP, extract it, then run start.bat\n3. Click "Retry" after the service starts successfully',
+      steps: '1. Download and install Python 3.10+ (skip if already installed)\n2. Download the startup script ZIP and extract it. Windows: run start.bat; Linux: run start-linux.sh; macOS: run start-macos.sh\n3. Click "Retry" after the service starts successfully',
       btn_python: '1. Install Python',
       btn_download: '2. Download Script',
       btn_retry: '3. Retry'
@@ -147,9 +147,18 @@ body {
   };
 
   window.downloadPackage = function() {
-    var url = 'https://raw.githubusercontent.com/easyeda/eext-kipida-integration/main/kipida-service/start.bat';
-    fetch(url).then(function(r) { return r.text(); }).then(function(content) {
-      var blob = buildZip('start.bat', content);
+    var base = 'https://raw.githubusercontent.com/easyeda/eext-kipida-integration/main/kipida-service/';
+    // Windows (.bat) + Linux (.sh) + macOS (.sh) launchers in one archive.
+    var files = ['start.bat', 'start-linux.sh', 'start-macos.sh'];
+    Promise.all(files.map(function(name) {
+      return fetch(base + name).then(function(r) {
+        if (!r.ok) throw new Error('fetch failed: ' + name);
+        return r.text();
+      }).then(function(content) {
+        return { name: name, content: content };
+      });
+    })).then(function(entries) {
+      var blob = buildZip(entries);
       var a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
       a.download = 'kipida-service.zip';
@@ -165,65 +174,74 @@ body {
     });
   };
 
-  // 构建 STORE 模式 ZIP（不压缩），让浏览器和杀毒软件不再把单个 .bat 当可疑下载
-  function buildZip(filename, contentStr) {
+  // 构建 STORE 模式 ZIP（不压缩），让浏览器和杀毒软件不再把单个 .bat 当可疑下载。
+  // entries: [{ name: string, content: string }]
+  function buildZip(entries) {
     var enc = new TextEncoder();
-    var nameBytes = enc.encode(filename);
-    var dataBytes = enc.encode(contentStr);
-    var crc = crc32(dataBytes);
+    var parts = [];        // 文件数据区（local header + name + data）
+    var centralParts = []; // 中央目录区
+    var offset = 0;        // 当前 local header 在文件中的偏移
 
-    var localHeader = new ArrayBuffer(30);
-    var lh = new DataView(localHeader);
-    lh.setUint32(0, 0x04034b50, true);
-    lh.setUint16(4, 20, true);
-    lh.setUint16(6, 0, true);
-    lh.setUint16(8, 0, true);
-    lh.setUint16(10, 0, true);
-    lh.setUint16(12, 0, true);
-    lh.setUint32(14, crc, true);
-    lh.setUint32(18, dataBytes.length, true);
-    lh.setUint32(22, dataBytes.length, true);
-    lh.setUint16(26, nameBytes.length, true);
-    lh.setUint16(28, 0, true);
+    entries.forEach(function(entry) {
+      var nameBytes = enc.encode(entry.name);
+      var dataBytes = enc.encode(entry.content);
+      var crc = crc32(dataBytes);
 
-    var central = new ArrayBuffer(46);
-    var cd = new DataView(central);
-    cd.setUint32(0, 0x02014b50, true);
-    cd.setUint16(4, 20, true);
-    cd.setUint16(6, 20, true);
-    cd.setUint16(8, 0, true);
-    cd.setUint16(10, 0, true);
-    cd.setUint16(12, 0, true);
-    cd.setUint16(14, 0, true);
-    cd.setUint32(16, crc, true);
-    cd.setUint32(20, dataBytes.length, true);
-    cd.setUint32(24, dataBytes.length, true);
-    cd.setUint16(28, nameBytes.length, true);
-    cd.setUint16(30, 0, true);
-    cd.setUint16(32, 0, true);
-    cd.setUint16(34, 0, true);
-    cd.setUint16(36, 0, true);
-    cd.setUint32(38, 0, true);
-    cd.setUint32(42, 0, true);
+      var localHeader = new ArrayBuffer(30);
+      var lh = new DataView(localHeader);
+      lh.setUint32(0, 0x04034b50, true);
+      lh.setUint16(4, 20, true);
+      lh.setUint16(6, 0, true);
+      lh.setUint16(8, 0, true);
+      lh.setUint16(10, 0, true);
+      lh.setUint16(12, 0, true);
+      lh.setUint32(14, crc, true);
+      lh.setUint32(18, dataBytes.length, true);
+      lh.setUint32(22, dataBytes.length, true);
+      lh.setUint16(26, nameBytes.length, true);
+      lh.setUint16(28, 0, true);
+      parts.push(localHeader, nameBytes, dataBytes);
 
-    var localSize = 30 + nameBytes.length + dataBytes.length;
-    var centralSize = 46 + nameBytes.length;
+      var central = new ArrayBuffer(46);
+      var cd = new DataView(central);
+      cd.setUint32(0, 0x02014b50, true);
+      cd.setUint16(4, 20, true);
+      cd.setUint16(6, 20, true);
+      cd.setUint16(8, 0, true);
+      cd.setUint16(10, 0, true);
+      cd.setUint16(12, 0, true);
+      cd.setUint16(14, 0, true);
+      cd.setUint32(16, crc, true);
+      cd.setUint32(20, dataBytes.length, true);
+      cd.setUint32(24, dataBytes.length, true);
+      cd.setUint16(28, nameBytes.length, true);
+      cd.setUint16(30, 0, true);
+      cd.setUint16(32, 0, true);
+      cd.setUint16(34, 0, true);
+      cd.setUint16(36, 0, true);
+      cd.setUint32(38, 0, true);
+      cd.setUint32(42, offset, true);
+      centralParts.push(central, nameBytes);
+
+      offset += 30 + nameBytes.length + dataBytes.length;
+    });
+
+    var centralSize = centralParts.reduce(function(sum, p) {
+      return sum + (p.byteLength !== undefined ? p.byteLength : p.length);
+    }, 0);
+
     var eocd = new ArrayBuffer(22);
     var e = new DataView(eocd);
     e.setUint32(0, 0x06054b50, true);
     e.setUint16(4, 0, true);
     e.setUint16(6, 0, true);
-    e.setUint16(8, 1, true);
-    e.setUint16(10, 1, true);
+    e.setUint16(8, entries.length, true);
+    e.setUint16(10, entries.length, true);
     e.setUint32(12, centralSize, true);
-    e.setUint32(16, localSize, true);
+    e.setUint32(16, offset, true);
     e.setUint16(20, 0, true);
 
-    return new Blob([
-      localHeader, nameBytes, dataBytes,
-      central, nameBytes,
-      eocd
-    ], { type: 'application/zip' });
+    return new Blob(parts.concat(centralParts, [eocd]), { type: 'application/zip' });
   }
 
   var _crcTable = null;

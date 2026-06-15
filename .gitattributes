@@ -1,1 +1,4 @@
 *.json linguist-language=JSON-with-Comments
+
+# Shell scripts must keep LF endings or the shebang breaks on Linux/macOS.
+*.sh text eol=lf
