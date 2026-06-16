@@ -42,8 +42,10 @@ export async function exportGerberLayers(signalLayerIds: number[]): Promise<Gerb
     return out;
   }
 
+  const t0 = Date.now();
   for (const layerId of signalLayerIds) {
     try {
+      const tLayer0 = Date.now();
       const file: File | undefined = await mfg.getGerberFile(
         `kipida_layer_${layerId}`,
         false,                              // colorSilkscreen
@@ -53,25 +55,29 @@ export async function exportGerberLayers(signalLayerIds: number[]): Promise<Gerb
         [{ layerId, isMirror: false }],     // 只导这一层
         ['CopperFilled', 'SolidRegion', 'Track']     // 铺铜区域 + 走线
       );
+      const tExport = Date.now();
 
       if (!file) {
-        console.warn(`[Gerber] 层 ${layerId} 导出返回空`);
+        console.warn(`[Gerber] 层 ${layerId} 导出返回空 (${tExport - tLayer0}ms)`);
         continue;
       }
 
       const data = await fileToBase64(file);
+      const tEncode = Date.now();
+
       if (!data) {
         console.warn(`[Gerber] 层 ${layerId} base64 为空`);
         continue;
       }
 
       out.push({ layer: layerId, data, filename: (file as any).name });
-      console.log(`[Gerber] 层 ${layerId} 导出成功: ${(file as any).name || ''} (${data.length} b64 chars)`);
+      console.log(`[Gerber] 层 ${layerId} 导出成功: ${(file as any).name || ''} (${data.length} b64 chars) [导出=${tExport - tLayer0}ms, 编码=${tEncode - tExport}ms]`);
     } catch (e) {
       console.warn(`[Gerber] 层 ${layerId} 导出失败:`, e);
     }
   }
 
-  console.log(`[Gerber] 共导出 ${out.length}/${signalLayerIds.length} 层`);
+  const totalMs = Date.now() - t0;
+  console.log(`[Gerber] 共导出 ${out.length}/${signalLayerIds.length} 层, 总耗时: ${totalMs}ms`);
   return out;
 }

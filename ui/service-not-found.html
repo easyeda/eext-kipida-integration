@@ -24,6 +24,7 @@ body {
 .steps { color: #555; text-align: left; line-height: 2.0; margin-bottom: 16px; max-width: 400px; font-size: 12px; }
 .section-title { font-size: 12px; color: #999; margin-bottom: 8px; }
 .btn-group { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; justify-content: center; }
+.btn-group-vertical { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; align-items: stretch; }
 .btn {
   padding: 7px 16px;
   font-size: 12px;
@@ -43,6 +44,15 @@ body {
   font-size: 13px;
 }
 .btn-download:hover { background: #2DB84D; border-color: #2DB84D; color: #FFF; }
+.btn-download-sub {
+  background: #FFF;
+  border-color: #34C759;
+  color: #34C759;
+  padding: 6px 16px;
+  font-size: 12px;
+  text-align: left;
+}
+.btn-download-sub:hover { background: #34C759; border-color: #34C759; color: #FFF; }
 .btn-python {
   background: #3776AB;
   border-color: #3776AB;
@@ -70,7 +80,22 @@ body {
 
 <div class="btn-group">
   <button class="btn btn-python" onclick="openPython()" id="btnPython"></button>
-  <button class="btn btn-download" onclick="downloadPackage()" id="btnDownload"></button>
+</div>
+
+<div class="section-title" id="downloadTitle"></div>
+<div class="btn-group-vertical">
+  <button class="btn btn-download-sub" onclick="downloadZip('windows')" id="btnDownloadWin">
+    <span id="btnDownloadWinIcon">🪟</span> <span id="btnDownloadWinText"></span>
+  </button>
+  <button class="btn btn-download-sub" onclick="downloadZip('linux')" id="btnDownloadLinux">
+    <span id="btnDownloadLinuxIcon">🐧</span> <span id="btnDownloadLinuxText"></span>
+  </button>
+  <button class="btn btn-download-sub" onclick="downloadZip('macos')" id="btnDownloadMac">
+    <span id="btnDownloadMacIcon">🍎</span> <span id="btnDownloadMacText"></span>
+  </button>
+</div>
+
+<div class="btn-group">
   <button class="btn btn-primary" onclick="retry()" id="btnRetry"></button>
 </div>
 
@@ -81,17 +106,23 @@ body {
     zh: {
       title: 'KiPIDA 服务未启动',
       desc: '请按以下步骤配置并启动 KiPIDA 分析服务：',
-      steps: '1. 下载并安装 Python 3.10+（如已安装可跳过）\n2. 下载启动脚本压缩包并解压，Windows 运行 start.bat，Linux 运行 start-linux.sh，macOS 运行 start-macos.sh\n3. 服务启动成功后点击"重新检测"',
+      steps: '1. 下载并安装 Python 3.10+（如已安装可跳过）\n2. 根据你的操作系统下载启动脚本压缩包，解压后运行启动脚本\n3. 服务启动成功后点击"重新检测"',
+      download_title: '2. 下载启动脚本',
+      btn_win: 'Windows (start.bat)',
+      btn_linux: 'Linux (start-linux.sh)',
+      btn_macos: 'macOS (start-macos.sh)',
       btn_python: '1. 安装 Python',
-      btn_download: '2. 下载启动脚本',
       btn_retry: '3. 重新检测'
     },
     en: {
       title: 'KiPIDA Service Not Running',
       desc: 'Please follow these steps to configure and start the KiPIDA analysis service:',
-      steps: '1. Download and install Python 3.10+ (skip if already installed)\n2. Download the startup script ZIP and extract it. Windows: run start.bat; Linux: run start-linux.sh; macOS: run start-macos.sh\n3. Click "Retry" after the service starts successfully',
+      steps: '1. Download and install Python 3.10+ (skip if already installed)\n2. Download the startup script ZIP for your OS, extract and run the startup script\n3. Click "Retry" after the service starts successfully',
+      download_title: '2. Download Startup Script',
+      btn_win: 'Windows (start.bat)',
+      btn_linux: 'Linux (start-linux.sh)',
+      btn_macos: 'macOS (start-macos.sh)',
       btn_python: '1. Install Python',
-      btn_download: '2. Download Script',
       btn_retry: '3. Retry'
     }
   };
@@ -103,8 +134,11 @@ body {
     document.getElementById('titleText').textContent = T.title;
     document.getElementById('descText').textContent = T.desc;
     document.getElementById('stepsText').innerText = T.steps;
+    document.getElementById('downloadTitle').textContent = T.download_title;
+    document.getElementById('btnDownloadWinText').textContent = T.btn_win;
+    document.getElementById('btnDownloadLinuxText').textContent = T.btn_linux;
+    document.getElementById('btnDownloadMacText').textContent = T.btn_macos;
     document.getElementById('btnPython').textContent = T.btn_python;
-    document.getElementById('btnDownload').textContent = T.btn_download;
     document.getElementById('btnRetry').textContent = T.btn_retry;
     document.title = T.title;
   }
@@ -146,27 +180,39 @@ body {
     }
   };
 
-  window.downloadPackage = function() {
+  window.downloadZip = function(os) {
     var base = 'https://raw.githubusercontent.com/easyeda/eext-kipida-integration/main/kipida-service/';
-    // Windows (.bat) + Linux (.sh) + macOS (.sh) launchers in one archive.
-    var files = ['start.bat', 'start-linux.sh', 'start-macos.sh'];
-    Promise.all(files.map(function(name) {
-      return fetch(base + name).then(function(r) {
-        if (!r.ok) throw new Error('fetch failed: ' + name);
-        return r.text();
-      }).then(function(content) {
-        return { name: name, content: content };
-      });
-    })).then(function(entries) {
-      var blob = buildZip(entries);
+    var filename = '';
+    var zipName = '';
+
+    if (os === 'windows') {
+      filename = 'start.bat';
+      zipName = 'kipida-service-windows.zip';
+    } else if (os === 'linux') {
+      filename = 'start-linux.sh';
+      zipName = 'kipida-service-linux.zip';
+    } else if (os === 'macos') {
+      filename = 'start-macos.sh';
+      zipName = 'kipida-service-macos.zip';
+    } else {
+      return;
+    }
+
+    fetch(base + filename).then(function(r) {
+      if (!r.ok) throw new Error('fetch failed: ' + filename);
+      return r.text();
+    }).then(function(content) {
+      var entry = { name: filename, content: content };
+      var blob = buildZip([entry]);
       var a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = 'kipida-service.zip';
+      a.download = zipName;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(a.href);
-    }).catch(function() {
+    }).catch(function(err) {
+      console.error('Download failed:', err);
       var eda = getEda();
       if (eda && eda.sys_Window) {
         eda.sys_Window.open('https://github.com/easyeda/eext-kipida-integration/tree/main/kipida-service');
@@ -174,13 +220,12 @@ body {
     });
   };
 
-  // 构建 STORE 模式 ZIP（不压缩），让浏览器和杀毒软件不再把单个 .bat 当可疑下载。
-  // entries: [{ name: string, content: string }]
+  // 构建 ZIP（STORE 模式，不压缩）
   function buildZip(entries) {
     var enc = new TextEncoder();
-    var parts = [];        // 文件数据区（local header + name + data）
-    var centralParts = []; // 中央目录区
-    var offset = 0;        // 当前 local header 在文件中的偏移
+    var parts = [];
+    var centralParts = [];
+    var offset = 0;
 
     entries.forEach(function(entry) {
       var nameBytes = enc.encode(entry.name);

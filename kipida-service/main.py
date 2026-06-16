@@ -1273,9 +1273,12 @@ async def analyze_pcb(data: KipidaInput, skip_plots: bool = False):
         # 且避免体积庞大的 base64 写入 last_input.json。
         if data.gerber_layers:
             try:
+                t_gerber_start = time.time()
                 from gerber_pour import build_pours_from_gerber, build_tracks_from_gerber
                 result = build_pours_from_gerber(data.gerber_layers, data.nodes, data.pour_infos)
                 gerber_pours, align_params = result
+                t_gerber_pours = time.time()
+                print(f"[TIMING] Gerber 铺铜解析耗时: {t_gerber_pours - t_gerber_start:.3f}s")
                 if gerber_pours:
                     data.copper_pours = [CopperPour(**p) for p in gerber_pours]
                     print(f"[KiPIDA] Gerber 铺铜替换: {len(data.copper_pours)} 块")
@@ -1285,6 +1288,8 @@ async def analyze_pcb(data: KipidaInput, skip_plots: bool = False):
                 # 从 Gerber 提取走线（含自由角度），靠 pad/via flood-fill 传播 net，合并到现有走线
                 dx, dy, ysign = align_params
                 gerber_tracks = build_tracks_from_gerber(data.gerber_layers, data.nodes, dx, dy, ysign)
+                t_gerber_tracks = time.time()
+                print(f"[TIMING] Gerber 走线提取耗时: {t_gerber_tracks - t_gerber_pours:.3f}s")
                 if gerber_tracks:
                     # 和 API 走线去重（按坐标+层匹配），补充 API 拿不到的自由角度走线
                     existing_keys = set()
@@ -1305,7 +1310,7 @@ async def analyze_pcb(data: KipidaInput, skip_plots: bool = False):
                             new_count += 1
                             existing_keys.add(key)
                             # 创建新的 resistance + nodes
-                            import time, random
+                            import random
                             node_id_prefix = f"gn_{int(time.time()*1000)}_{random.randint(0,9999)}"
                             sn_id = f"{node_id_prefix}_s{new_count}"
                             en_id = f"{node_id_prefix}_e{new_count}"
@@ -1328,10 +1333,14 @@ async def analyze_pcb(data: KipidaInput, skip_plots: bool = False):
                                 net=t['net'], resistance_id=res_id
                             ))
                     print(f"[KiPIDA] Gerber 走线补充: {new_count} 条新走线 (总提取 {len(gerber_tracks)})")
+                    t_gerber_merge = time.time()
+                    print(f"[TIMING] Gerber 走线合并耗时: {t_gerber_merge - t_gerber_tracks:.3f}s")
             except Exception as e:
                 print(f"[KiPIDA] Gerber 解析失败，保留原数据: {e}")
                 import traceback; traceback.print_exc()
             finally:
+                t_gerber_end = time.time()
+                print(f"[TIMING] Gerber 处理总耗时: {t_gerber_end - t_gerber_start:.3f}s")
                 data.gerber_layers = []  # 清空，避免进入缓存键/落盘
                 data.pour_infos = []
 

@@ -195,8 +195,11 @@ export async function runIRDropAnalysis(): Promise<void> {
     eda.sys_LoadingAndProgressBar.showProgressBar(5, 'pdn-analysis');
 
     // Step 1: 提取 PCB 数据
+    const tExtract0 = Date.now();
     const extractor = new PcbExtractor();
     const easyedaData = await extractor.extractAll();
+    const tExtract1 = Date.now();
+    console.log(`[KiPIDA] PCB 数据提取耗时: ${tExtract1 - tExtract0}ms`);
 
     if (!easyedaData || (easyedaData.tracks.length === 0 && easyedaData.vias.length === 0 && easyedaData.pads.length === 0)) {
       eda.sys_Dialog.showInformationMessage('未找到 PCB 数据，请确保打开了 PCB 文件', '警告');
@@ -207,8 +210,11 @@ export async function runIRDropAnalysis(): Promise<void> {
     eda.sys_LoadingAndProgressBar.showProgressBar(20, 'pdn-analysis');
 
     // Step 2: 转换数据（先不生成 sources/loads）
+    const tConvert0 = Date.now();
     const converter = new PcbDataConverter();
     const kipidaData = converter.convert(easyedaData);
+    const tConvert1 = Date.now();
+    console.log(`[KiPIDA] 数据转换耗时: ${tConvert1 - tConvert0}ms`);
     console.log('[KiPIDA] 提取完成:', easyedaData);
     eda.sys_LoadingAndProgressBar.showProgressBar(35, 'pdn-analysis');
 
@@ -253,7 +259,10 @@ export async function runIRDropAnalysis(): Promise<void> {
 
     // Step 5.5: 逐信号层导出 Gerber，铺铜几何由服务端从中解析
     try {
+      const tGerber0 = Date.now();
       const gerberLayers = await exportGerberLayers(easyedaData.signalLayerIds || []);
+      const tGerber1 = Date.now();
+      console.log(`[KiPIDA] Gerber 导出耗时: ${tGerber1 - tGerber0}ms (${gerberLayers.length} 层)`);
       kipidaData.gerber_layers = gerberLayers;
       kipidaData.pour_infos = easyedaData.pourInfos || [];
     } catch (e) {
@@ -263,15 +272,21 @@ export async function runIRDropAnalysis(): Promise<void> {
     eda.sys_LoadingAndProgressBar.showProgressBar(50, 'pdn-analysis');
 
     // Step 6: 调用分析服务
+    const tApi0 = Date.now();
     const result = await api.analyze(kipidaData);
+    const tApi1 = Date.now();
+    console.log(`[KiPIDA] API 分析耗时: ${tApi1 - tApi0}ms`);
     eda.sys_LoadingAndProgressBar.showProgressBar(90, 'pdn-analysis');
 
-    // Step 6: 展示结果
+    // Step 7: 展示结果
+    const tDisplay0 = Date.now();
     const display = new ResultDisplay();
     display.show(result, easyedaData.layerNames);
+    const tDisplay1 = Date.now();
+    console.log(`[KiPIDA] 结果展示耗时: ${tDisplay1 - tDisplay0}ms`);
     eda.sys_LoadingAndProgressBar.showProgressBar(100, 'pdn-analysis');
 
-    console.log('[KiPIDA] 分析完成');
+    console.log(`[KiPIDA] 分析完成, 总耗时: ${tDisplay1 - tExtract0}ms`);
   } catch (error) {
     console.error('[KiPIDA] 分析失败:', error);
     eda.sys_Dialog.showInformationMessage(`分析失败: ${error}`, '错误');
