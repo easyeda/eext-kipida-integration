@@ -39,13 +39,32 @@ export interface EasyEDA_CopperPour {
   is_fill: boolean;
 }
 
+/** Pour 的轻量信息（只从 API 取 net/layer/外轮廓包围盒，不碰不可靠的 PourFills 几何） */
+export interface PourInfo {
+  net: string;
+  layer: number;
+  /** 外轮廓包围盒 (mil)，用于和 Gerber region 做 IoU 匹配 */
+  bbox: { minx: number; miny: number; maxx: number; maxy: number };
+}
+
 export interface EasyEDA_PcbData {
   tracks: EasyEDA_Track[];
   vias: EasyEDA_Via[];
   pads: EasyEDA_Pad[];
   copperPours?: EasyEDA_CopperPour[];
+  /** Pour 轻量信息（net + layer + bbox），用于服务端和 Gerber 几何做 IoU 匹配 */
+  pourInfos?: PourInfo[];
   layerNames?: Record<number, string>;
   outerLayerIds?: Set<number>;
+  /** 所有信号铜箔层 id（SIGNAL/TOP/BOTTOM），不经使用过滤，供 Gerber 导出用 */
+  signalLayerIds?: number[];
+}
+
+/** 单层 Gerber 导出结果（base64），铺铜几何由服务端从中解析 */
+export interface GerberLayer {
+  layer: number;
+  data: string;
+  filename?: string;
 }
 
 // ============================================================
@@ -118,6 +137,10 @@ export interface Kipida_PcbData {
   sources: Kipida_Source[];
   loads: Kipida_Load[];
   copper_pours?: Kipida_CopperPour[];
+  /** 各信号层的 Gerber（base64），服务端解析出铺铜几何后回填 copper_pours */
+  gerber_layers?: GerberLayer[];
+  /** Pour 轻量信息（net + layer + bbox），服务端用于和 Gerber 区域做 IoU 匹配回填 net */
+  pour_infos?: PourInfo[];
   mesh_resolution?: number;
   max_drop_pct?: number;
   metadata?: Kipida_Metadata;

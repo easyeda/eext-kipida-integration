@@ -47,6 +47,17 @@ if not exist "%~dp0main.py" (
     echo [KiPIDA] main.py downloaded.
 )
 
+if not exist "%~dp0gerber_pour.py" (
+    echo [KiPIDA] gerber_pour.py not found, downloading...
+    curl -L -o "%~dp0gerber_pour.py" "https://raw.githubusercontent.com/easyeda/eext-kipida-integration/main/kipida-service/gerber_pour.py"
+    if not exist "%~dp0gerber_pour.py" (
+        echo [KiPIDA] ERROR: Failed to download gerber_pour.py
+        pause
+        exit /b 1
+    )
+    echo [KiPIDA] gerber_pour.py downloaded.
+)
+
 if not exist "%~dp0requirements.txt" (
     echo [KiPIDA] requirements.txt not found, downloading...
     curl -L -o "%~dp0requirements.txt" "https://raw.githubusercontent.com/easyeda/eext-kipida-integration/main/kipida-service/requirements.txt"

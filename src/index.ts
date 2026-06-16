@@ -2,6 +2,7 @@ import * as extensionConfig from '../extension.json';
 import { Kipida_Source, Kipida_Load } from './types';
 import { PcbExtractor } from './extract';
 import { PcbDataConverter } from './convert';
+import { exportGerberLayers } from './gerber';
 import { KipidaApiClient } from './api';
 import { ResultDisplay } from './display';
 
@@ -249,6 +250,17 @@ export async function runIRDropAnalysis(): Promise<void> {
 
     console.log('[KiPIDA] 用户配置:', userConfig);
     eda.sys_LoadingAndProgressBar.showProgressBar(30, 'pdn-analysis');
+
+    // Step 5.5: 逐信号层导出 Gerber，铺铜几何由服务端从中解析
+    try {
+      const gerberLayers = await exportGerberLayers(easyedaData.signalLayerIds || []);
+      kipidaData.gerber_layers = gerberLayers;
+      kipidaData.pour_infos = easyedaData.pourInfos || [];
+    } catch (e) {
+      console.warn('[KiPIDA] Gerber 导出失败，将无铺铜几何继续分析:', e);
+      kipidaData.gerber_layers = [];
+    }
+    eda.sys_LoadingAndProgressBar.showProgressBar(50, 'pdn-analysis');
 
     // Step 6: 调用分析服务
     const result = await api.analyze(kipidaData);

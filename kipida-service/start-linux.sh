@@ -44,6 +44,7 @@ export KIPIDA_PATH
 
 echo "[KiPIDA] Checking service files..."
 download "$RAW_SERVICE/main.py"          "$SCRIPT_DIR/main.py"          "main.py"
+download "$RAW_SERVICE/gerber_pour.py"   "$SCRIPT_DIR/gerber_pour.py"   "gerber_pour.py"
 download "$RAW_SERVICE/requirements.txt" "$SCRIPT_DIR/requirements.txt" "requirements.txt"
 
 echo "[KiPIDA] Checking Python environment..."

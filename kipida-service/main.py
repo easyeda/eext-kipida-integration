@@ -30,7 +30,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 
 # ============================================================
 # 数据模型定义
@@ -99,6 +99,8 @@ class KipidaInput(BaseModel):
     sources: List[Source] = []
     loads: List[Load] = []
     copper_pours: List[CopperPour] = []
+    gerber_layers: List[Dict[str, Any]] = []  # [{"layer": int, "data": base64, "filename": str}]
+    pour_infos: List[Dict[str, Any]] = []    # [{"net": str, "layer": int, "bbox": {...}}]
     mesh_resolution: Optional[float] = 0.1
     max_drop_pct: Optional[float] = 5.0
     board_thickness: Optional[float] = 1.6
@@ -1265,6 +1267,74 @@ async def test_connection():
 async def analyze_pcb(data: KipidaInput, skip_plots: bool = False):
     try:
         analysis_state["total_requests"] += 1
+
+        # 若提供了 Gerber 层，则从中解析铺铜几何并关联 net，替换 copper_pours。
+        # 放在缓存键/last_input 落盘之前：缓存键基于派生 pours（仍唯一），
+        # 且避免体积庞大的 base64 写入 last_input.json。
+        if data.gerber_layers:
+            try:
+                from gerber_pour import build_pours_from_gerber, build_tracks_from_gerber
+                result = build_pours_from_gerber(data.gerber_layers, data.nodes, data.pour_infos)
+                gerber_pours, align_params = result
+                if gerber_pours:
+                    data.copper_pours = [CopperPour(**p) for p in gerber_pours]
+                    print(f"[KiPIDA] Gerber 铺铜替换: {len(data.copper_pours)} 块")
+                else:
+                    print("[KiPIDA] Gerber 未解析出铺铜，保留原 copper_pours")
+
+                # 从 Gerber 提取走线（含自由角度），靠 pad/via flood-fill 传播 net，合并到现有走线
+                dx, dy, ysign = align_params
+                gerber_tracks = build_tracks_from_gerber(data.gerber_layers, data.nodes, dx, dy, ysign)
+                if gerber_tracks:
+                    # 和 API 走线去重（按坐标+层匹配），补充 API 拿不到的自由角度走线
+                    existing_keys = set()
+                    for r in data.resistances:
+                        sn = next((n for n in data.nodes if n.id == r.start_node), None)
+                        en = next((n for n in data.nodes if n.id == r.end_node), None)
+                        if sn and en:
+                            key = f"{r.net}|{r.layer}|{round(sn.x)}|{round(sn.y)}|{round(en.x)}|{round(en.y)}"
+                            existing_keys.add(key)
+                            # 也加反向
+                            existing_keys.add(f"{r.net}|{r.layer}|{round(en.x)}|{round(en.y)}|{round(sn.x)}|{round(sn.y)}")
+
+                    new_count = 0
+                    for t in gerber_tracks:
+                        key = f"{t['net']}|{t['layer']}|{round(t['x1'])}|{round(t['y1'])}|{round(t['x2'])}|{round(t['y2'])}"
+                        key_rev = f"{t['net']}|{t['layer']}|{round(t['x2'])}|{round(t['y2'])}|{round(t['x1'])}|{round(t['y1'])}"
+                        if key not in existing_keys and key_rev not in existing_keys:
+                            new_count += 1
+                            existing_keys.add(key)
+                            # 创建新的 resistance + nodes
+                            import time, random
+                            node_id_prefix = f"gn_{int(time.time()*1000)}_{random.randint(0,9999)}"
+                            sn_id = f"{node_id_prefix}_s{new_count}"
+                            en_id = f"{node_id_prefix}_e{new_count}"
+                            data.nodes.append(Node(id=sn_id, net=t['net'], type='junction',
+                                                   x=t['x1'], y=t['y1'], layer=t['layer']))
+                            data.nodes.append(Node(id=en_id, net=t['net'], type='junction',
+                                                   x=t['x2'], y=t['y2'], layer=t['layer']))
+                            length = ((t['x2']-t['x1'])**2 + (t['y2']-t['y1'])**2)**0.5
+                            thickness = 0.035  # 1oz copper
+                            width = t['width']
+                            resistance = (1.68e-5 * length) / (width * thickness) if width * thickness > 0 else 0.001
+                            res_id = f"gres_{new_count}"
+                            data.resistances.append(Resistance(
+                                id=res_id, start_node=sn_id, end_node=en_id,
+                                net=t['net'], length=length, width=width,
+                                thickness=thickness, layer=t['layer'], resistance=resistance
+                            ))
+                            data.connections.append(Connection(
+                                from_node=sn_id, to=en_id, type='track',
+                                net=t['net'], resistance_id=res_id
+                            ))
+                    print(f"[KiPIDA] Gerber 走线补充: {new_count} 条新走线 (总提取 {len(gerber_tracks)})")
+            except Exception as e:
+                print(f"[KiPIDA] Gerber 解析失败，保留原数据: {e}")
+                import traceback; traceback.print_exc()
+            finally:
+                data.gerber_layers = []  # 清空，避免进入缓存键/落盘
+                data.pour_infos = []
+
         analysis_state["last_input"] = data.model_dump()
 
         input_path = os.path.join(os.path.dirname(__file__), 'last_input.json')

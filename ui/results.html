@@ -7,8 +7,13 @@
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; background: #f0f0f0; color: #222; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
 
-  .summary { padding: 8px 14px; background: #fff; border-bottom: 1px solid #ccc; font-family: monospace; font-size: 12px; max-height: 120px; overflow-y: auto; white-space: pre; }
-  .summary-title { font-weight: 600; font-size: 13px; font-family: sans-serif; margin-bottom: 4px; }
+  /* Main split: chart on the left, numbers on the right */
+  .main-content { flex: 1; display: flex; flex-direction: row; overflow: hidden; }
+  .chart-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  .info-panel { width: 300px; flex-shrink: 0; background: #fff; border-left: 1px solid #ccc; overflow-y: auto; }
+
+  .summary { padding: 10px 14px; font-family: monospace; font-size: 12px; white-space: pre-wrap; }
+  .summary-title { font-weight: 600; font-size: 13px; font-family: sans-serif; margin-bottom: 6px; }
 
   /* Net tabs (top level) */
   .net-tabs { display: flex; flex-wrap: wrap; gap: 2px; padding: 4px 8px; background: #e0e0e0; border-bottom: 1px solid #bbb; }
@@ -34,16 +39,21 @@
 </head>
 <body>
 
-<div class="summary">
-  <div class="summary-title">系统仿真结果：</div>
-  <div id="summary-text" class="loading">等待分析结果...</div>
-</div>
+<div class="main-content">
+  <div class="chart-panel">
+    <div class="net-tabs" id="net-tabs"></div>
+    <div class="view-tabs" id="view-tabs"></div>
+    <div class="chart-area" id="chart-area">
+      <div class="loading">等待分析结果...</div>
+    </div>
+  </div>
 
-<div class="net-tabs" id="net-tabs"></div>
-<div class="view-tabs" id="view-tabs"></div>
-
-<div class="chart-area" id="chart-area">
-  <div class="loading">等待分析结果...</div>
+  <div class="info-panel">
+    <div class="summary">
+      <div class="summary-title">系统仿真结果：</div>
+      <div id="summary-text" class="loading">等待分析结果...</div>
+    </div>
+  </div>
 </div>
 
 <div class="footer">

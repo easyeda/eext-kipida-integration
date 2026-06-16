@@ -16,7 +16,7 @@ export class ResultDisplay {
     });
 
     eda.sys_IFrame.openIFrame('/ui/results.html', 860, 600, 'kipida-results', {
-      maximizeButton: false,
+      maximizeButton: true,
       minimizeButton: true,
       buttonCallbackFn: (btn) => {
         if (btn === 'close') task.cancel();
