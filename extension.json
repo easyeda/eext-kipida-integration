@@ -3,7 +3,7 @@
 	"uuid": "a1i8t4u1l2a6t3i7o9n1f3i6l8e0p4u9",
 	"displayName": "KiPIDA仿真",
 	"description": "桥接 EasyEDA 与 KiPIDA 进行 PCB 直流（DC）电源完整性（PI）分析仿真。",
-	"version": "1.0.0",
+	"version": "1.1.0",
 	"publisher": "EasyEDA",
 	"engines": {
 		"eda": "^3.2.0"
